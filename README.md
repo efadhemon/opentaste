@@ -8,7 +8,8 @@ conventions, then compiles the high-confidence ones into whichever instruction
 files your editor already reads. Everything runs locally: no telemetry, no
 external server, no cloud LLM.
 
-See [SPEC.md](SPEC.md) for the full architecture specification.
+See [SPEC.md](SPEC.md) for the architecture specification and [PLAN.md](PLAN.md)
+for the step-by-step plan covering the remaining phases.
 
 ## Status
 
