@@ -1,0 +1,12 @@
+---
+source: crates/taste-core/tests/transpiler_output.rs
+expression: "cursor_mdc::render_file(RuleCategory::CodeStyle, &style)"
+---
+---
+description: OpenTaste auto-learned rules for Code Style (Do not edit manually)
+alwaysApply: true
+---
+
+# OpenTaste: Code Style Preferences
+
+- **[`**/*`]** Prefer early returns (guard clauses) over nested if-else blocks.

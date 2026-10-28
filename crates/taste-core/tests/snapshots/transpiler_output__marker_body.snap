@@ -1,0 +1,36 @@
+---
+source: crates/taste-core/tests/transpiler_output.rs
+expression: "render::sections(&rules())"
+---
+## Coding Taste & Project Conventions (Auto-Learned)
+
+### Architecture
+
+- **[`src/**/*.entity.ts`]** Use custom @AutoEntity() and @AutoIndex() decorators instead of raw TypeORM @Entity() and @Index().
+  - Avoid:
+
+    ```
+    @Entity('users')
+    export class User {}
+    ```
+
+  - Prefer:
+
+    ```
+    @AutoEntity()
+    export class User {}
+    ```
+
+- **[`src/**/*.controller.ts`]** Always return a standardized ApiResponse<T> wrapper from controller methods.
+  - Avoid: `return this.userService.findAll();`
+  - Prefer: `return ApiResponse.ok(await this.userService.findAll());`
+
+### Code Style
+
+- **[`**/*`]** Prefer early returns (guard clauses) over nested if-else blocks.
+
+### Imports
+
+- **[`src/**/*.ts`]** Import through the @/ path alias rather than deep relative paths.
+  - Avoid: `import { User } from '../../users/user.entity';`
+  - Prefer: `import { User } from '@/users/user.entity';`

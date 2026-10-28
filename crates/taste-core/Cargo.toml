@@ -1,0 +1,24 @@
+[package]
+name = "taste-core"
+description = "Core engine for OpenTaste: models, storage, scoring and the universal transpiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+globset.workspace = true
+regex.workspace = true
+dirs.workspace = true
+rusqlite.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+insta.workspace = true

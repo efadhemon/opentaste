@@ -1,0 +1,30 @@
+---
+source: crates/taste-core/tests/transpiler_output.rs
+expression: "cursor_mdc::render_file(RuleCategory::Architecture, &architecture)"
+---
+---
+description: OpenTaste auto-learned rules for Architecture (Do not edit manually)
+globs: ["src/**/*.controller.ts","src/**/*.entity.ts"]
+alwaysApply: false
+---
+
+# OpenTaste: Architecture Preferences
+
+- **[`src/**/*.entity.ts`]** Use custom @AutoEntity() and @AutoIndex() decorators instead of raw TypeORM @Entity() and @Index().
+  - Avoid:
+
+    ```
+    @Entity('users')
+    export class User {}
+    ```
+
+  - Prefer:
+
+    ```
+    @AutoEntity()
+    export class User {}
+    ```
+
+- **[`src/**/*.controller.ts`]** Always return a standardized ApiResponse<T> wrapper from controller methods.
+  - Avoid: `return this.userService.findAll();`
+  - Prefer: `return ApiResponse.ok(await this.userService.findAll());`

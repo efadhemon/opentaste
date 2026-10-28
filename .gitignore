@@ -1,0 +1,48 @@
+# ─── Rust build output ────────────────────────────────────────────────────────
+/target
+**/*.rs.bk
+*.pdb
+
+# Insta writes pending snapshots here while you review them. The reviewed
+# `.snap` files next to them ARE committed: they are the expected output the
+# transpiler tests assert against, and CI fails without them.
+**/*.snap.new
+
+# ─── OpenTaste local state ────────────────────────────────────────────────────
+# `.taste/rules.json` is deliberately NOT ignored. It is the git-tracked,
+# reviewable rule set and sharing it across the team is the point of the tool.
+# Everything else under `.taste/` is a local cache that rescanning rebuilds.
+.taste/cache.db
+.taste/cache.db-wal
+.taste/cache.db-shm
+.taste/.lock
+.taste/*.log
+
+# ─── Node / TypeScript (phase 6: packages/) ───────────────────────────────────
+node_modules/
+dist/
+out/
+*.vsix
+*.tsbuildinfo
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+
+# ─── Editor and agent scratch ─────────────────────────────────────────────────
+# Agent plan files are working notes, not project history.
+.cursor/plans/
+# `.cursor/rules/opentaste-*.mdc` and `.cursor/mcp.json` are intentionally left
+# committable: they are what teammates who have not installed `taste` rely on.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ─── OS noise ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

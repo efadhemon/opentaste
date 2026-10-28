@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/taste-core",
+    "crates/taste-mcp",
+    "crates/taste-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+# `std::fs::File::lock` (used for the advisory rule-store lock) stabilised in 1.89.
+rust-version = "1.89"
+license = "MIT"
+authors = ["OpenTaste Contributors"]
+repository = "https://github.com/opentaste/opentaste"
+
+[workspace.dependencies]
+taste-core = { path = "crates/taste-core", version = "0.1.0" }
+taste-mcp = { path = "crates/taste-mcp", version = "0.1.0" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "2.0"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.11"
+ignore = "0.4"
+rayon = "1.12"
+globset = "0.4"
+similar = { version = "3.2", features = ["inline"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+tree-sitter = "0.27"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"
+clap = { version = "4.6", features = ["derive"] }
+notify = "8.0"
+ratatui = "0.30"
+crossterm = "0.29"
+regex = "1.13"
+dirs = "7.0"
+
+tempfile = "3.27"
+pretty_assertions = "1.4"
+insta = "1.49"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"

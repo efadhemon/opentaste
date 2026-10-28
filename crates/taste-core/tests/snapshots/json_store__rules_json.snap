@@ -1,0 +1,43 @@
+---
+source: crates/taste-core/tests/json_store.rs
+expression: raw
+---
+{
+  "$schema": "https://opentaste.dev/schema/v1.json",
+  "version": "1.0.0",
+  "project_context": {
+    "detected_stack": [
+      "typescript",
+      "nestjs",
+      "react"
+    ],
+    "total_files_scanned": 342,
+    "last_updated": "2026-10-29T00:00:00Z"
+  },
+  "rules": [
+    {
+      "id": "arch-custom-entity-decorators",
+      "category": "architecture",
+      "scope": "src/**/*.entity.ts",
+      "confidence": 0.95,
+      "occurrences": 4,
+      "enabled": true,
+      "source": "ast-diff",
+      "instruction": "Use custom @AutoEntity() and @AutoIndex() decorators instead of raw TypeORM @Entity() and @Index().",
+      "anti_pattern": "@Entity('users')\nexport class User {}",
+      "preferred_pattern": "@AutoEntity()\nexport class User {}",
+      "updated_at": "2026-10-29T00:00:00Z"
+    },
+    {
+      "id": "style-early-returns",
+      "category": "code-style",
+      "scope": "**/*",
+      "confidence": 0.95,
+      "occurrences": 4,
+      "enabled": true,
+      "source": "ast-diff",
+      "instruction": "Prefer early returns (guard clauses) over nested if-else blocks.",
+      "updated_at": "2026-10-29T00:00:00Z"
+    }
+  ]
+}

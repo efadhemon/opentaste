@@ -1,0 +1,14 @@
+[package]
+name = "taste-mcp"
+description = "Zero-dependency JSON-RPC 2.0 stdio MCP server exposing OpenTaste rules to AI editors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+taste-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
