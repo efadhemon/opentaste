@@ -165,11 +165,14 @@ Two artefacts cross a phase boundary and must not be changed unilaterally:
   delta tracker must exclude exactly those paths, so it reads them from one list
   rather than hardcoding its own.
 
-## Deferred past v0.1
+## Not deferred any more: v1.0 scope
 
-These appear in SPEC.md but no phase implements them. They are listed here so
-nobody rediscovers them mid-phase and treats them as a blocker, and so nobody
-builds a weak version of one by accident.
+**On 2026-10-30 the scope changed: nothing in SPEC.md is cut.** Every row in
+the table below is planned for v1.0.0, along with the other gaps found by
+[plans/V1-AUDIT.md](plans/V1-AUDIT.md), which orders the work into phases 7
+to 12. The table stays because its *why* column records the risk each item
+carries; read it before starting the phase that builds the item, and do not
+build a weak version of one to tick it off.
 
 | Item | Where it appears | Why it is deferred |
 | --- | --- | --- |
