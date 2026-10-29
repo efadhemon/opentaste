@@ -131,11 +131,17 @@ extension treats any edit that is not itself a burst as a correction.
 
 ## Step 7: Scrubber boundary (W9)
 
-- [ ] Vendor-prefix patterns (`AKIA`, `ghp_`, `sk_live_`, …) match after any
-      non-alphanumeric character or at the start, not only at a `\b`, for
-      prefixes that cannot begin an English word.
-- [ ] Tests: `xxxAKIA…` and `token=ghp_…` are redacted; the English words in
-      the existing negative fixtures still are not.
+- [x] The leading `\b` is gone for prefixes nothing in ordinary code has
+      mid-word: `AKIA`, `gh[pousr]_`, `github_pat_`, `xox?-`, `AIza`,
+      `glpat-`, `eyJ`. It stays on `ASIA` and `sk_`/`rk_`, because
+      `SOUTHEASIA…`, `task_test_…` and `desk_live_…` are real identifiers and
+      redacting them would mangle the snippet. (The regex crate has no
+      look-behind, so "after a non-alphanumeric" would have consumed that
+      character; dropping the anchor is simpler and exact.)
+- [x] Tests: `xxxAKIA…`, `MY_ghp_…`, `tokenglpat-…` and `Bearerxoxb-…` are
+      redacted (fails with the old regex); `task_test_…`, `desk_live_…` and
+      `SOUTHEASIA…` identifiers are left alone; the existing negative
+      fixtures still pass.
 
 ## Step 8: Scan hygiene (W10, W11, W12)
 

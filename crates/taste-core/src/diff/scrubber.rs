@@ -253,18 +253,25 @@ fn private_key() -> &'static Regex {
 
 /// Credentials whose prefix identifies the issuer. These are close to free of
 /// false positives, so they are matched anywhere, not only inside strings.
+///
+/// Most prefixes have no leading `\b`, so a key glued to the text before it
+/// (`xxxAKIA…`, `MY_ghp_…`) is still found: nothing in ordinary code starts
+/// with `AKIA`, `ghp_` or `glpat-` mid-word. `ASIA` and `sk_`/`rk_` keep the
+/// boundary, because `SOUTHEASIA…` and identifiers like `task_test_…` or
+/// `desk_live_…` do occur, and redacting them would mangle the snippet.
 fn vendor_key() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(concat!(
-            r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b",
-            r"|\bgh[pousr]_[A-Za-z0-9]{36,}\b",
-            r"|\bgithub_pat_[A-Za-z0-9_]{22,}\b",
-            r"|\bxox[abposr]-[A-Za-z0-9-]{10,}",
+            r"AKIA[0-9A-Z]{16}\b",
+            r"|\bASIA[0-9A-Z]{16}\b",
+            r"|gh[pousr]_[A-Za-z0-9]{36,}\b",
+            r"|github_pat_[A-Za-z0-9_]{22,}\b",
+            r"|xox[abposr]-[A-Za-z0-9-]{10,}",
             r"|\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}\b",
-            r"|\bAIza[0-9A-Za-z_-]{35}",
-            r"|\bglpat-[A-Za-z0-9_-]{20,}",
-            r"|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+            r"|AIza[0-9A-Za-z_-]{35}",
+            r"|glpat-[A-Za-z0-9_-]{20,}",
+            r"|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
         ))
         .expect("vendor key regex")
     })
@@ -505,6 +512,38 @@ mod tests {
         ] {
             assert_redacted(&format!("// leaked: {secret}\n"), secret);
         }
+    }
+
+    #[test]
+    fn a_vendor_key_glued_to_the_text_before_it_is_still_redacted() {
+        for (glued, secret) in [
+            ("xxxAKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"),
+            (
+                "MY_ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789",
+                "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789",
+            ),
+            (
+                "tokenglpat-abcdefghij1234567890",
+                "glpat-abcdefghij1234567890",
+            ),
+            (
+                "Bearerxoxb-123456789012-abcdefghijkl",
+                "xoxb-123456789012-abcdefghijkl",
+            ),
+        ] {
+            let scrubbed = scrub(
+                &format!("// leaked: {glued}\n"),
+                SupportedLanguage::TypeScript,
+            );
+            assert!(!scrubbed.contains(secret), "{glued}: {scrubbed}");
+            assert!(scrubbed.contains(REDACTED), "{glued}: {scrubbed}");
+        }
+    }
+
+    #[test]
+    fn identifiers_that_contain_a_risky_prefix_mid_word_are_left_alone() {
+        let source = "const task_test_suite1234567 = 1;\nconst desk_live_preview2024 = 2;\nconst SOUTHEASIAPACIFICREGION0001 = 3;\n";
+        assert_eq!(scrub(source, SupportedLanguage::TypeScript), source);
     }
 
     #[test]

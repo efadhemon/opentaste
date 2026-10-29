@@ -330,6 +330,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
     low-entropy text around it hides it from the entropy check too. That is
     rare in real code, but `(?:^|[^A-Za-z0-9])` in place of `\b` would close
     it for the prefixes that cannot start an English word.
+    **Status: done** in phase 7 step 7.
 
 ## Suggested order
 
