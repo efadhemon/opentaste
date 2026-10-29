@@ -52,6 +52,7 @@ fn a_repeatedly_corrected_pattern_graduates_into_the_git_tracked_file() {
                 break;
             }
             Outcome::AlreadyConfirmed { .. } => panic!("promotion should come first"),
+            Outcome::Conflicts { .. } => panic!("no opposite rule exists"),
         }
     }
 

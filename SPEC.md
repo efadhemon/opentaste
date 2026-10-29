@@ -315,6 +315,7 @@ Instead of relying on cloud LLMs, `taste-core` identifies concrete structural tr
 Before saving any `anti_pattern` or `preferred_pattern` snippet:
 
 - Redacts high-entropy strings (Shannon entropy $> 4.5$ on tokens $> 16$ chars) with `"<REDACTED_SECRET>"`.
+  A flat 4.5 cannot catch hex (at most 4.0 bits per character) or tokens shorter than about 23 characters, so long hex tokens use a limit of 3.0 and mixed-case-plus-digit tokens of 20+ characters are measured against 90% of their length's maximum. Vendor key prefixes, webhook URLs, URL credentials and secret-named assignments are matched by pattern first.
 - Strips `.env` values, Bearer tokens, AWS keys, and private keys.
 
 ---

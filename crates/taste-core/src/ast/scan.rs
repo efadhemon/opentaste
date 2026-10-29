@@ -67,6 +67,9 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         // A `.gitignore` is the developer's exclusion list even before `git init`.
         .require_git(false)
         .git_global(false)
+        // The root itself is never filtered: a project checked out as `build/`
+        // is still a project.
+        .filter_entry(|entry| entry.depth() == 0 || !is_generated(entry.path(), entry.file_type()))
         .build()
     {
         let Ok(entry) = entry else {
@@ -164,8 +167,56 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     })
 }
 
+/// Directories that hold installed, built or vendored code, skipped whether
+/// or not a `.gitignore` lists them. Somebody else's code is not this
+/// project's taste, and missing a hand-written file under `build/` costs far
+/// less than a ratio skewed by a bundle.
+const GENERATED_DIRS: &[&str] = &[
+    "node_modules",
+    "bower_components",
+    "vendor",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+    "target",
+    ".next",
+    ".nuxt",
+    ".svelte-kit",
+    ".turbo",
+];
+
+/// File suffixes that are declarations or build output rather than code a
+/// developer wrote. `.d.ts` files are nearly all `export interface`, which
+/// would skew both the export and the type ratio.
+const GENERATED_SUFFIXES: &[&str] = &[
+    ".d.ts",
+    ".d.mts",
+    ".d.cts",
+    ".min.js",
+    ".min.mjs",
+    ".bundle.js",
+];
+
+fn is_generated(path: &Path, file_type: Option<std::fs::FileType>) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    if file_type.is_some_and(|kind| kind.is_dir()) {
+        return GENERATED_DIRS.contains(&name);
+    }
+    let lower = name.to_ascii_lowercase();
+    GENERATED_SUFFIXES
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
+}
+
 fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation) -> Result<bool> {
     let id = rule_id(observation.category, &observation.instruction);
+    // A deleted rule is the developer's answer to this exact ratio.
+    if store.candidates().is_rejected(&id)? {
+        return Ok(true);
+    }
     if store.rules()?.find(&id).is_some() {
         return Ok(true);
     }

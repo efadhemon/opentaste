@@ -1,19 +1,40 @@
 //! Concrete structural edits between a before and an after buffer.
 //!
 //! Every snippet this module produces passes through [`super::scrub`] inside
-//! [`analyze`]. Detectors return the raw node text; they do not redact it
-//! themselves, so a new detector cannot skip the scrubber.
+//! [`analyze`], and is then cut to [`MAX_SNIPPET_LINES`] lines and
+//! [`MAX_SNIPPET_BYTES`] bytes. Detectors return the raw node text; they do not
+//! redact or trim it themselves, so a new detector cannot skip either step.
+//!
+//! An edit is ignored when a syntax error overlaps the lines it changed. A
+//! half-typed buffer parses into error-recovery trees whose node shapes are
+//! guesses, and a rule learned from a guess is a wrong rule. An error
+//! elsewhere in the file does not block an edit that is clear of it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use tree_sitter::{Node, Tree};
 
-use crate::ast::{decorator_name, node_text, parse, unquote, ScriptQuery, SupportedLanguage};
+use crate::ast::{
+    decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
+    node_text, parse, unquote, ScriptQuery, SupportedLanguage,
+};
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
 use super::scrub;
+
+/// Longest snippet, in lines, stored as an anti or preferred pattern.
+pub const MAX_SNIPPET_LINES: usize = 12;
+/// Longest snippet, in bytes, stored as an anti or preferred pattern.
+pub const MAX_SNIPPET_BYTES: usize = 400;
+/// Last line of a truncated snippet. It is a comment, and comments never
+/// match in [`super::contradictions`], so a truncated anti-pattern can never
+/// decay a rule by matching only its first few lines.
+const TRUNCATED: &str = "// …";
+
+/// Instruction the logger-replacement detector emits.
+pub const PREFER_LOGGER: &str = "Prefer a logger service over `console.log` and `console.error`.";
 
 const ROLES: &[&str] = &[
     "controller",
@@ -48,6 +69,9 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
     };
 
     let (removed, added) = changed_lines(before, after);
+    if touches_error(&before_tree, &removed) || touches_error(&after_tree, &added) {
+        return Ok(Vec::new());
+    }
     let mut found = Vec::new();
     for detector in DETECTORS {
         let Some(observation) = detector.detect(&before_tree, before, &after_tree, after, path)
@@ -57,7 +81,7 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
         if !grounded(&observation, before, after, &removed, &added) {
             continue;
         }
-        found.push(scrub_observation(observation, lang));
+        found.push(prepare_snippets(observation, lang));
     }
     Ok(found)
 }
@@ -102,6 +126,8 @@ impl Detector for DecoratorSwap {
     ) -> Option<Observation> {
         let before = decorated(before_tree, before_src);
         let after = decorated(after_tree, after_src);
+        let before_imports = imports(before_tree, before_src);
+        let after_imports = imports(after_tree, after_src);
         let mut keys: Vec<_> = before.keys().chain(after.keys()).cloned().collect();
         keys.sort();
         keys.dedup();
@@ -112,6 +138,15 @@ impl Detector for DecoratorSwap {
             let Some(swap) = swapped_names(before_item, after_item) else {
                 continue;
             };
+            // Only a framework decorator giving way to a project-specific one
+            // is a taste. `@Get` to `@Post` or `@IsString` to `@IsNumber`
+            // changes what the code does, and learning it as a preference
+            // would rewrite every other file in scope.
+            if !from_framework(&swap.old_name, &before_imports)
+                || from_framework(&swap.new_name, &after_imports)
+            {
+                continue;
+            }
             let (old_name, old_text, new_name, new_text) =
                 (swap.old_name, swap.old_text, swap.new_name, swap.new_text);
             return Some(observation(
@@ -147,13 +182,14 @@ impl Detector for ImportRewrite {
             ) else {
                 continue;
             };
-            if from == to {
-                continue;
-            }
-            let instruction = if to == ImportClass::Alias {
-                crate::ast::PREFER_PATH_ALIASES
-            } else {
-                "Prefer relative imports over path aliases (`@/` or `~/`)."
+            // Only the alias-versus-deep-relative choice the scanner measures is
+            // a taste. `@/users/x` becoming `./x` is a sibling import, which
+            // says nothing about deep paths, and learning it as "prefer
+            // relative" would contradict a scanned alias rule.
+            let instruction = match (from, to) {
+                (ImportClass::DeepRelative, ImportClass::Alias) => crate::ast::PREFER_PATH_ALIASES,
+                (ImportClass::Alias, ImportClass::DeepRelative) => crate::ast::PREFER_DEEP_RELATIVE,
+                _ => continue,
             };
             return Some(observation(
                 RuleCategory::Imports,
@@ -182,13 +218,18 @@ impl Detector for LoggerReplacement {
             if after.iter().any(|call| call.text == console.text) {
                 continue;
             }
-            let logger = after
+            // An unmatched console call (deleted outright) is no reason to stop
+            // looking at the ones that were replaced.
+            let Some(logger) = after
                 .iter()
-                .find(|call| call.kind == CallKind::Logger && call.args == console.args)?;
+                .find(|call| call.kind == CallKind::Logger && call.args == console.args)
+            else {
+                continue;
+            };
             return Some(observation(
                 RuleCategory::CodeStyle,
                 path,
-                "Prefer a logger service over `console.log` and `console.error`.",
+                PREFER_LOGGER,
                 console.text.clone(),
                 logger.text.clone(),
             ));
@@ -278,6 +319,7 @@ impl Detector for ErrorClass {
     ) -> Option<Observation> {
         let before = throws(before_tree, before_src);
         let after = throws(after_tree, after_src);
+        let after_imports = imports(after_tree, after_src);
         for (args, before_throw) in &before {
             let Some(after_throw) = after.get(args) else {
                 continue;
@@ -285,7 +327,11 @@ impl Detector for ErrorClass {
             if before_throw.constructor == after_throw.constructor {
                 continue;
             }
-            if !is_bare_error(&before_throw.constructor) || is_bare_error(&after_throw.constructor)
+            // `Error` becoming `NotFoundException` or a class from some package
+            // is a different built-in, not a project's own error class.
+            if !is_bare_error(&before_throw.constructor)
+                || !is_custom_error(&after_throw.constructor)
+                || from_package(&after_throw.constructor, &after_imports)
             {
                 continue;
             }
@@ -347,14 +393,72 @@ fn observation(
     .with_patterns(Some(anti.into()), Some(preferred.into()))
 }
 
-fn scrub_observation(mut observation: Observation, lang: SupportedLanguage) -> Observation {
-    if let Some(anti) = observation.anti_pattern.as_mut() {
-        *anti = scrub(anti, lang);
-    }
-    if let Some(preferred) = observation.preferred_pattern.as_mut() {
-        *preferred = scrub(preferred, lang);
+/// Scrub, then trim. Scrubbing sees the whole snippet, so a cut can never
+/// leave behind a fragment of a secret the patterns no longer recognise.
+fn prepare_snippets(mut observation: Observation, lang: SupportedLanguage) -> Observation {
+    for snippet in [
+        observation.anti_pattern.as_mut(),
+        observation.preferred_pattern.as_mut(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *snippet = truncate_snippet(&scrub(snippet, lang));
     }
     observation
+}
+
+/// `snippet` cut at a line boundary to fit both limits, ending in
+/// [`TRUNCATED`] when anything was dropped.
+fn truncate_snippet(snippet: &str) -> String {
+    if snippet.len() <= MAX_SNIPPET_BYTES && snippet.lines().count() <= MAX_SNIPPET_LINES {
+        return snippet.to_string();
+    }
+    let mut kept = String::new();
+    for line in snippet.lines().take(MAX_SNIPPET_LINES) {
+        if kept.is_empty() && line.len() > MAX_SNIPPET_BYTES {
+            let mut cut = MAX_SNIPPET_BYTES;
+            while !line.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            kept.push_str(&line[..cut]);
+            break;
+        }
+        if !kept.is_empty() && kept.len() + 1 + line.len() > MAX_SNIPPET_BYTES {
+            break;
+        }
+        if !kept.is_empty() {
+            kept.push('\n');
+        }
+        kept.push_str(line);
+    }
+    format!("{}\n{TRUNCATED}", kept.trim_end())
+}
+
+/// Whether an `ERROR` or `MISSING` node in `tree` covers any of `lines`.
+fn touches_error(tree: &Tree, lines: &HashSet<usize>) -> bool {
+    let root = tree.root_node();
+    if !root.has_error() {
+        return false;
+    }
+    let mut rows = Vec::new();
+    collect_error_rows(root, &mut rows);
+    rows.iter()
+        .any(|(start, end)| (*start..=*end).any(|line| lines.contains(&line)))
+}
+
+fn collect_error_rows(node: Node<'_>, rows: &mut Vec<(usize, usize)>) {
+    if node.is_error() || node.is_missing() {
+        rows.push((node.start_position().row, node.end_position().row));
+        return;
+    }
+    if !node.has_error() {
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_error_rows(child, rows);
+    }
 }
 
 fn grounded(
@@ -564,6 +668,22 @@ fn named_decorator(node: Node<'_>, source: &str) -> Option<(String, String)> {
     Some((name, node_text(node, source).to_string()))
 }
 
+/// A decorator that comes from a framework rather than from this project:
+/// imported from a package, or a name the scanner knows that the project did
+/// not import from its own files.
+fn from_framework(name: &str, imports: &HashMap<String, ImportBinding>) -> bool {
+    match imports.get(name) {
+        Some(binding) => is_package_specifier(&binding.path),
+        None => is_framework_decorator(name),
+    }
+}
+
+fn from_package(name: &str, imports: &HashMap<String, ImportBinding>) -> bool {
+    imports
+        .get(name)
+        .is_some_and(|binding| is_package_specifier(&binding.path))
+}
+
 struct Swap {
     old_name: String,
     old_text: String,
@@ -599,6 +719,9 @@ fn swapped_names(before: &Decorated, after: &Decorated) -> Option<Swap> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ImportClass {
     Alias,
+    /// `../../` or deeper, the side the scanner counts against aliases.
+    DeepRelative,
+    /// `./x` or `../x`.
     Relative,
 }
 
@@ -627,52 +750,11 @@ fn imports(tree: &Tree, source: &str) -> HashMap<String, ImportBinding> {
     found
 }
 
-fn import_locals(stmt: Node<'_>, source: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut cursor = stmt.walk();
-    for child in stmt.named_children(&mut cursor) {
-        if child.kind() == "import_clause" {
-            collect_locals(child, source, &mut names);
-        }
-    }
-    names
-}
-
-fn collect_locals(node: Node<'_>, source: &str, names: &mut Vec<String>) {
-    match node.kind() {
-        "import_specifier" => {
-            let local = node
-                .child_by_field_name("alias")
-                .or_else(|| node.child_by_field_name("name"));
-            if let Some(local) = local {
-                names.push(node_text(local, source).to_string());
-            }
-        }
-        "namespace_import" | "identifier" => {
-            if node.kind() == "identifier" {
-                names.push(node_text(node, source).to_string());
-            } else {
-                let mut cursor = node.walk();
-                let ident = node
-                    .named_children(&mut cursor)
-                    .find(|child| child.kind() == "identifier");
-                if let Some(ident) = ident {
-                    names.push(node_text(ident, source).to_string());
-                }
-            }
-        }
-        _ => {
-            let mut cursor = node.walk();
-            for child in node.named_children(&mut cursor) {
-                collect_locals(child, source, names);
-            }
-        }
-    }
-}
-
 fn import_class(path: &str) -> Option<ImportClass> {
     if path.starts_with("@/") || path.starts_with("~/") {
         Some(ImportClass::Alias)
+    } else if path.contains("../..") {
+        Some(ImportClass::DeepRelative)
     } else if path.starts_with('.') {
         Some(ImportClass::Relative)
     } else {
@@ -753,9 +835,9 @@ static TYPES: ScriptQuery = ScriptQuery::new(
 );
 
 fn type_decls(tree: &Tree, source: &str) -> HashMap<String, TypeDecl> {
-    let mut found = HashMap::new();
+    let mut found = Vec::new();
     for_each_match(&TYPES, tree, source, |names, nodes| {
-        let name = text_of("name", names, nodes, source)?.to_string();
+        let name = text_of("name", names, nodes, source)?;
         let decl = node_of("decl", names, nodes)?;
         let text = node_text(decl, source).trim().to_string();
         let kind = if decl.kind() == "interface_declaration" {
@@ -763,10 +845,10 @@ fn type_decls(tree: &Tree, source: &str) -> HashMap<String, TypeDecl> {
         } else {
             TypeKind::Alias
         };
-        found.insert(name, TypeDecl { kind, text });
+        found.push((qualified(decl, source, name), TypeDecl { kind, text }));
         Some(())
     });
-    found
+    unique(found)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -792,25 +874,25 @@ static FUNCTIONS: ScriptQuery = ScriptQuery::new(
 );
 
 fn functions(tree: &Tree, source: &str) -> HashMap<String, FnDecl> {
-    let mut found = HashMap::new();
+    let mut found = Vec::new();
     for_each_match(&FUNCTIONS, tree, source, |names, nodes| {
-        let name = text_of("name", names, nodes, source)?.to_string();
+        let name = text_of("name", names, nodes, source)?;
         let decl = node_of("decl", names, nodes)?;
         let kind = if decl.kind() == "function_declaration" {
             FnKind::Declaration
         } else {
             FnKind::Arrow
         };
-        found.insert(
-            name,
+        found.push((
+            qualified(decl, source, name),
             FnDecl {
                 kind,
                 text: node_text(decl, source).trim().to_string(),
             },
-        );
+        ));
         Some(())
     });
-    found
+    unique(found)
 }
 
 struct Throw {
@@ -827,16 +909,19 @@ static THROWS: ScriptQuery = ScriptQuery::new(
     "#,
 );
 
+/// Throws keyed by the function they sit in plus their arguments, so
+/// `throw new X()` in two different functions cannot pair with each other.
 fn throws(tree: &Tree, source: &str) -> HashMap<String, Throw> {
-    let mut found = HashMap::new();
+    let mut found = Vec::new();
     for_each_match(&THROWS, tree, source, |names, nodes| {
         let constructor = text_of("constructor", names, nodes, source)?.to_string();
-        let args = text_of("args", names, nodes, source)?.to_string();
-        let text = text_of("throw", names, nodes, source)?.trim().to_string();
-        found.insert(args, Throw { constructor, text });
+        let args = text_of("args", names, nodes, source)?;
+        let throw = node_of("throw", names, nodes)?;
+        let text = node_text(throw, source).trim().to_string();
+        found.push((qualified(throw, source, args), Throw { constructor, text }));
         Some(())
     });
-    found
+    unique(found)
 }
 
 struct Flow {
@@ -845,20 +930,95 @@ struct Flow {
     sample: String,
 }
 
+/// Function declarations, class methods and `const` arrows with a block body.
+/// Most NestJS and Angular logic lives in methods, so leaving them out would
+/// make the detector silent exactly where it matters.
 static FLOWS: ScriptQuery = ScriptQuery::new(
-    "(function_declaration name: (identifier) @name body: (statement_block) @body) @fn",
+    r#"
+    (function_declaration name: (identifier) @name body: (statement_block) @body) @fn
+    (method_definition name: (_) @name body: (statement_block) @body) @fn
+    (lexical_declaration
+      "const"
+      (variable_declarator
+        name: (identifier) @name
+        value: (arrow_function body: (statement_block) @body))) @fn
+    "#,
 );
 
 fn flows(tree: &Tree, source: &str) -> HashMap<String, Flow> {
-    let mut found = HashMap::new();
+    let mut found = Vec::new();
     for_each_match(&FLOWS, tree, source, |names, nodes| {
-        let name = text_of("name", names, nodes, source)?.to_string();
+        let name = text_of("name", names, nodes, source)?;
+        let function = node_of("fn", names, nodes)?;
         let body = node_of("body", names, nodes)?;
-        let flow = inspect_flow(body, source);
-        found.insert(name, flow);
+        found.push((
+            qualified(function, source, name),
+            inspect_flow(body, source),
+        ));
         Some(())
     });
-    found
+    unique(found)
+}
+
+/// `name` prefixed with the named scopes around `node`: `UserService.load`,
+/// `outer.inner`. Two same-named functions in different scopes must not
+/// pair with each other across a before and after buffer.
+fn qualified(node: Node<'_>, source: &str, name: &str) -> String {
+    let mut parts = vec![name.to_string()];
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if let Some(scope) = scope_name(ancestor, source) {
+            parts.push(scope.to_string());
+        }
+        current = ancestor.parent();
+    }
+    parts.reverse();
+    parts.join(".")
+}
+
+fn scope_name<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str> {
+    match node.kind() {
+        "class_declaration"
+        | "abstract_class_declaration"
+        | "class"
+        | "function_declaration"
+        | "generator_function_declaration"
+        | "method_definition"
+        | "interface_declaration"
+        | "internal_module" => node
+            .child_by_field_name("name")
+            .map(|name| node_text(name, source)),
+        "variable_declarator" => {
+            let value = node.child_by_field_name("value")?;
+            if matches!(
+                value.kind(),
+                "arrow_function" | "function_expression" | "function" | "class"
+            ) {
+                node.child_by_field_name("name")
+                    .map(|name| node_text(name, source))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Keep only keys that occur once. A key that occurs twice (overloads, or two
+/// identical throws in one function) cannot be paired across buffers with any
+/// confidence, so it is dropped rather than letting the last one win.
+fn unique<T>(pairs: Vec<(String, T)>) -> HashMap<String, T> {
+    let mut slots: HashMap<String, Option<T>> = HashMap::new();
+    for (key, value) in pairs {
+        slots
+            .entry(key)
+            .and_modify(|slot| *slot = None)
+            .or_insert(Some(value));
+    }
+    slots
+        .into_iter()
+        .filter_map(|(key, value)| value.map(|value| (key, value)))
+        .collect()
 }
 
 fn inspect_flow(body: Node<'_>, source: &str) -> Flow {
@@ -985,5 +1145,95 @@ mod tests {
         assert!(anti.contains("Entity"), "{anti}");
         assert!(anti.contains("<REDACTED_SECRET>"), "{anti}");
         assert_eq!(found[0].scope, "src/**/*.entity.ts");
+    }
+
+    #[test]
+    fn a_short_snippet_is_stored_whole() {
+        let snippet = "function load() {\n  return 1;\n}";
+        assert_eq!(truncate_snippet(snippet), snippet);
+    }
+
+    #[test]
+    fn a_long_snippet_is_cut_at_a_line_and_marked() {
+        let body: String = (0..40).map(|i| format!("  step{i}();\n")).collect();
+        let snippet = format!("function load() {{\n{body}}}");
+        let cut = truncate_snippet(&snippet);
+        assert!(cut.lines().count() <= MAX_SNIPPET_LINES + 1, "{cut}");
+        assert!(
+            cut.len() <= MAX_SNIPPET_BYTES + TRUNCATED.len() + 1,
+            "{cut}"
+        );
+        assert!(cut.starts_with("function load() {\n  step0();"), "{cut}");
+        assert!(cut.ends_with(TRUNCATED), "{cut}");
+        assert!(snippet.starts_with(cut.trim_end_matches(TRUNCATED).trim_end()));
+    }
+
+    #[test]
+    fn one_enormous_line_is_cut_on_a_character_boundary() {
+        let snippet = format!("const s = \"{}\";", "é".repeat(400));
+        let cut = truncate_snippet(&snippet);
+        assert!(cut.ends_with(TRUNCATED), "{cut}");
+        assert!(cut.len() <= MAX_SNIPPET_BYTES + TRUNCATED.len() + 1);
+    }
+
+    #[test]
+    fn a_whole_function_swap_stores_a_bounded_snippet() {
+        let body: String = (0..60).map(|i| format!("  step{i}();\n")).collect();
+        let before = format!("function load() {{\n{body}}}\n");
+        let after = format!("const load = () => {{\n{body}}};\n");
+        let found = analyze(&before, &after, Path::new("src/app.ts")).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        for snippet in [&found[0].anti_pattern, &found[0].preferred_pattern] {
+            let snippet = snippet.as_deref().unwrap();
+            assert!(
+                snippet.len() <= MAX_SNIPPET_BYTES + TRUNCATED.len() + 1,
+                "{snippet}"
+            );
+            assert!(snippet.ends_with(TRUNCATED), "{snippet}");
+        }
+    }
+
+    #[test]
+    fn a_secret_straddling_the_cut_is_scrubbed_before_it_could_be_split() {
+        // The key starts a few bytes before the cut. Trimming first would keep
+        // `AKIAIOSF`, which no pattern recognises any more.
+        let filler = "x".repeat(382);
+        let before =
+            format!("@Entity(\"{filler} AKIAIOSFODNN7EXAMPLE\")\nexport class User {{}}\n");
+        let after = before.replacen("@Entity", "@AutoEntity", 1);
+        let found = analyze(&before, &after, Path::new("src/users/user.entity.ts")).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        let anti = found[0].anti_pattern.as_deref().unwrap();
+        assert!(anti.ends_with(TRUNCATED), "{anti}");
+        assert!(!anti.contains("AKIA"), "{anti}");
+    }
+
+    #[test]
+    fn a_half_typed_edit_learns_nothing() {
+        // Both buffers fire a detector when the error guard is removed: the
+        // recovered tree still looks like a finished refactor.
+        let cases = [
+            (
+                "function f(x) {\n  if (x) {\n    return 1;\n  } else {\n    return 2;\n  }\n}\n",
+                "function f(x) {\n  if (!x) return 2;\n  return 1\n  if (\n}\n",
+            ),
+            (
+                "function f() {\n  throw new Error(\"x\");\n}\n",
+                "function f() {\n  throw new DomainError(\"x\");\n  const\n}\n",
+            ),
+        ];
+        for (before, after) in cases {
+            let found = analyze(before, after, Path::new("src/app.ts")).unwrap();
+            assert!(found.is_empty(), "{after}: {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_syntax_error_away_from_the_edit_does_not_block_it() {
+        let broken = "\n\n\n\n\n\n\n\nconst broken = (;\n";
+        let before = format!("function load() {{\n  return 1;\n}}\n{broken}");
+        let after = format!("const load = () => {{\n  return 1;\n}};\n{broken}");
+        let found = analyze(&before, &after, Path::new("src/app.ts")).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
     }
 }

@@ -10,4 +10,4 @@ mod structural;
 
 pub use contradiction::contradictions;
 pub use scrubber::scrub;
-pub use structural::analyze;
+pub use structural::{analyze, PREFER_LOGGER};

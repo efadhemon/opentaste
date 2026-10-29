@@ -107,6 +107,11 @@ pub enum Outcome {
         confidence: f32,
         occurrences: u32,
     },
+    /// The observation is the opposite of the confirmed rule `conflicts_with`
+    /// ("prefer `type`" against "prefer `interface`"). Nothing was recorded:
+    /// installing both would put two contradicting instructions in front of
+    /// the editor. `id` is the identifier the observation would have had.
+    Conflicts { id: String, conflicts_with: String },
 }
 
 impl Outcome {
@@ -115,7 +120,8 @@ impl Outcome {
         match self {
             Outcome::Created { id, .. }
             | Outcome::Reinforced { id, .. }
-            | Outcome::AlreadyConfirmed { id, .. } => id,
+            | Outcome::AlreadyConfirmed { id, .. }
+            | Outcome::Conflicts { id, .. } => id,
             Outcome::Promoted(rule) => &rule.id,
         }
     }
@@ -229,6 +235,12 @@ impl RuleStore {
         if let Some(existing_id) = find_matching_rule(&rules, &observation) {
             return self.reinforce_confirmed(&mut rules, &existing_id);
         }
+        if let Some(conflicts_with) = find_opposite_rule(&rules, &observation) {
+            return Ok(Outcome::Conflicts {
+                id: rule_id(observation.category, &observation.instruction),
+                conflicts_with,
+            });
+        }
 
         let candidate = match self.find_matching_candidate(&observation)? {
             Some(existing) => merge_into_candidate(existing, &observation),
@@ -324,6 +336,9 @@ impl RuleStore {
 
     /// Remove a rule entirely, from both the confirmed file and the candidate
     /// cache, so it cannot immediately reappear.
+    ///
+    /// The identifier is also remembered as rejected, so `taste scan` does not
+    /// reinstall it from the same ratio it was inferred from.
     pub fn delete_rule(&self, id: &str) -> Result<bool> {
         let _guard = self.lock()?;
         let mut rules = self.json.load()?;
@@ -332,7 +347,11 @@ impl RuleStore {
             self.json.save(&rules)?;
         }
         let removed_candidate = self.candidates.delete_candidate(id)?;
-        Ok(removed_rule || removed_candidate)
+        let removed = removed_rule || removed_candidate;
+        if removed {
+            self.candidates.reject(id)?;
+        }
+        Ok(removed)
     }
 
     /// Replace the recorded project context, as `taste scan` does.
@@ -409,6 +428,14 @@ impl RuleStore {
 }
 
 /// Find a confirmed rule describing the same preference as `observation`.
+/// A confirmed rule that says the opposite of `observation`, for the
+/// symmetric choices the analyzers know both sides of.
+fn find_opposite_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
+    let opposite = crate::ast::opposite_instruction(&observation.instruction)?;
+    let id = rule_id(observation.category, opposite);
+    rules.find(&id).map(|rule| rule.id.clone())
+}
+
 fn find_matching_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
     let expected_id = rule_id(observation.category, &observation.instruction);
     if rules.find(&expected_id).is_some() {
@@ -792,6 +819,38 @@ mod tests {
     }
 
     #[test]
+    fn the_opposite_of_a_confirmed_rule_is_refused_rather_than_installed_beside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store(tmp.path());
+        let rule = store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "**/*.{ts,tsx}",
+                RuleSource::Manual,
+                crate::ast::PREFER_INTERFACE,
+            ))
+            .unwrap()
+            .promoted()
+            .unwrap()
+            .clone();
+
+        let outcome = store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "src/**/*.ts",
+                RuleSource::AstDiff,
+                crate::ast::PREFER_TYPE_ALIAS,
+            ))
+            .unwrap();
+        match outcome {
+            Outcome::Conflicts { conflicts_with, .. } => assert_eq!(conflicts_with, rule.id),
+            other => panic!("expected a conflict, got {other:?}"),
+        }
+        assert_eq!(store.rules().unwrap().rules.len(), 1);
+        assert!(store.candidate_rules().unwrap().is_empty());
+    }
+
+    #[test]
     fn deleting_clears_both_the_confirmed_rule_and_any_candidate_trace() {
         let tmp = tempfile::tempdir().unwrap();
         let store = store(tmp.path());
@@ -811,6 +870,7 @@ mod tests {
         assert!(store.delete_rule(&rule.id).unwrap());
         assert!(store.rules().unwrap().rules.is_empty());
         assert!(store.candidate_rules().unwrap().is_empty());
+        assert!(store.candidates().is_rejected(&rule.id).unwrap());
         assert!(!store.delete_rule(&rule.id).unwrap());
     }
 

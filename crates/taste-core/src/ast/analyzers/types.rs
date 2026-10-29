@@ -1,8 +1,13 @@
-//! `interface` declarations versus `type` aliases.
+//! `interface` declarations versus `type` aliases for object types.
 //!
 //! JavaScript files are skipped entirely. An `interface` cannot appear in
 //! JavaScript, so counting a file that could not have expressed either side
 //! would dilute the ratio with zeros.
+//!
+//! Only an alias whose value is an object type counts. Unions, function
+//! types, mapped types and utility types cannot be written as an `interface`,
+//! so counting them would push the ratio toward "prefer `type`" in projects
+//! that always use `interface` for objects.
 
 use tree_sitter::Tree;
 
@@ -13,7 +18,7 @@ use crate::ast::SupportedLanguage;
 static TYPES: ScriptQuery = ScriptQuery::new(
     r#"
     (interface_declaration) @interface
-    (type_alias_declaration) @type_alias
+    (type_alias_declaration value: (object_type)) @type_alias
     "#,
 );
 

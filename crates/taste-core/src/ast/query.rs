@@ -94,3 +94,58 @@ pub(crate) fn unquote(raw: &str) -> &str {
     }
     trimmed
 }
+
+/// Local names an `import_statement` binds: default, named (or their
+/// aliases) and namespace imports.
+pub(crate) fn import_locals(stmt: Node<'_>, source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut cursor = stmt.walk();
+    for child in stmt.named_children(&mut cursor) {
+        if child.kind() == "import_clause" {
+            collect_locals(child, source, &mut names);
+        }
+    }
+    names
+}
+
+fn collect_locals(node: Node<'_>, source: &str, names: &mut Vec<String>) {
+    match node.kind() {
+        "import_specifier" => {
+            let local = node
+                .child_by_field_name("alias")
+                .or_else(|| node.child_by_field_name("name"));
+            if let Some(local) = local {
+                names.push(node_text(local, source).to_string());
+            }
+        }
+        "namespace_import" | "identifier" => {
+            if node.kind() == "identifier" {
+                names.push(node_text(node, source).to_string());
+            } else {
+                let mut cursor = node.walk();
+                let ident = node
+                    .named_children(&mut cursor)
+                    .find(|child| child.kind() == "identifier");
+                if let Some(ident) = ident {
+                    names.push(node_text(ident, source).to_string());
+                }
+            }
+        }
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                collect_locals(child, source, names);
+            }
+        }
+    }
+}
+
+/// Whether an import specifier names a package rather than a project file.
+///
+/// `@nestjs/common` is a package; `@/users/user` and `~/lib` are path aliases.
+pub(crate) fn is_package_specifier(specifier: &str) -> bool {
+    !(specifier.starts_with('.')
+        || specifier.starts_with('/')
+        || specifier.starts_with("@/")
+        || specifier.starts_with("~/"))
+}
