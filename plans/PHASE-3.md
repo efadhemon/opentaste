@@ -176,11 +176,15 @@ Four modules, per SPEC.md section 2:
 - [x] `imports.rs` — alias (`@/`, `~/`) versus deep relative (`../../`), named
       versus default exports.
 - [x] `types.rs` — `interface X {}` versus `type X = {}`, skipping JavaScript
-      files.
+      files. Only aliases whose value is an object type count; a union or a
+      function type cannot be an `interface` (review finding B5).
 - [x] `functions.rs` — `function foo()` versus `const foo = () =>`, and the
       presence of early-return guard clauses.
 - [x] `arch.rs` — custom decorators (`@AutoEntity`) versus framework ones
-      (`@Entity`), and custom error classes versus bare `Error`.
+      (`@Entity`), and custom error classes versus bare `Error`. Import origin
+      decides first (a package import is framework, a relative or alias import
+      is the project's), then a name list. JavaScript, DOM and NestJS built-in
+      exceptions are neither side (review finding B6).
 
 **Scope narrowing, recorded on purpose.** SPEC.md section 2 also lists "strict
 null checks" and "zod schemas" under `types.rs` and "DI patterns" under
@@ -232,6 +236,10 @@ express the shape.
       table was built in phase 1 and it has no other consumer.
 - [x] Skip files above a size ceiling (1 MiB is ample) and anything that fails to
       decode as UTF-8, counting them as skipped rather than failing the scan.
+- [x] Never walk vendored or built output (`node_modules`, `dist`, `build`,
+      `out`, `vendor`, `coverage`, `target`, `.next`, …) or declaration and
+      minified files (`*.d.ts`, `*.min.js`, `*.bundle.js`), with or without a
+      `.gitignore` (review finding B7).
 - [x] Detect the stack for `ProjectContext::detected_stack` by reading
       `package.json` (dependency names for `react`, `nestjs`, `next`, …),
       `Cargo.toml`, `pyproject.toml` and `go.mod`. Record it together with
@@ -266,10 +274,16 @@ which the unsafe path exists.
 
 - [x] `pub fn scrub(snippet: &str, lang: SupportedLanguage) -> String` replacing
       findings with `"<REDACTED_SECRET>"`, per SPEC.md section 5.3.
-- [x] Shannon entropy above `4.5` on tokens longer than 16 characters.
-- [x] Pattern matches for AWS access keys (`AKIA…`), bearer tokens, private key
-      headers (`-----BEGIN … PRIVATE KEY-----`) and `.env`-style assignments
-      (`SECRET=…`, `*_TOKEN=…`, `*_KEY=…`).
+- [x] Shannon entropy above `4.5` on tokens longer than 16 characters, plus a
+      3.0 limit for hex tokens of 32+ characters and a length-scaled limit for
+      mixed-class tokens of 20+ characters. 4.5 alone cannot catch either
+      (review finding B1).
+- [x] Pattern matches for AWS access keys (`AKIA…`, `ASIA…`), other vendor
+      prefixes (GitHub, Slack, Stripe, Google, GitLab, JWTs), webhook URLs,
+      URL userinfo and secret query parameters, bearer tokens, private key
+      headers (`-----BEGIN … PRIVATE KEY-----`), `.env`-style assignments
+      quoted or bare (`SECRET=…`, `*_TOKEN=…`, `*_KEY=…`), and string literals
+      assigned to names ending in a secret word (`password`, `apiKey`).
 - [x] Call it from the one place every snippet passes through, so no future
       detector can bypass it. Assert that in a test.
 
@@ -295,6 +309,11 @@ which is the entire reason it is stored.
 - [x] Derive each `Observation`'s `scope` from the changed file's path, narrowed
       to a meaningful glob (`src/**/*.entity.ts` for `src/users/user.entity.ts`),
       not `**/*`. A rule scoped too widely is a wrong rule.
+- [x] Cap every stored snippet at 12 lines and 400 bytes, scrubbing first and
+      ending a cut snippet in a `// …` comment so it cannot contradict on a
+      prefix. Skip any edit whose changed lines overlap an `ERROR` or
+      `MISSING` node, since a half-typed buffer's recovered tree is a guess
+      (review improvements 1 and 2).
 
 **Recommendation: ship in two waves.** SPEC.md section 5.2 lists seven detectors
 of very different difficulty. The first three are near-unambiguous and deliver
@@ -302,8 +321,14 @@ most of the value.
 
 Wave one:
 
-- [x] Decorator swap — `@A(...)` on a class, method or property becomes `@B(...)`.
-- [x] Import path rewrite — relative becomes alias, or the reverse.
+- [x] Decorator swap — `@A(...)` on a class, method or property becomes `@B(...)`,
+      only when `A` is a framework decorator (known by name or imported from a
+      package) and `B` is not. `@Get` to `@Post` is a behaviour change, not a
+      taste (review finding B2).
+- [x] Import path rewrite — deep relative becomes alias, or the reverse, using
+      the scanner's own instruction constants so `opposite_instruction`
+      recognises both. A sibling import (`./x`) is not either side (review
+      finding B8).
 - [x] Logger replacement — `console.log` / `console.error` becomes a logger
       service call (`this.logger.log`, `logger.info`).
 
@@ -312,13 +337,17 @@ Wave two:
 - [x] Type construct swap — `interface X` ↔ `type X =`.
 - [x] Function syntax preference — `function foo()` ↔ `const foo = () =>`.
 - [x] Error class substitution — `throw new Error(...)` or `HttpException`
-      becomes a custom exception class.
+      becomes a custom exception class. A framework built-in or a class
+      imported from a package does not count as custom (review finding B6).
 
 Last, and only if the six above are solid:
 
 - [x] Control-flow flattening — nested `if/else` refactored into early-return
       guard clauses. This needs real tree-shape comparison rather than node
       matching, and it is the one most likely to produce confident nonsense.
+      Covers function declarations, class methods and `const` arrows, each
+      keyed by its enclosing scopes (`UserService.load`) so same-named
+      functions never pair (review findings B9, B11).
 
 **Six working detectors beat seven where one misfires**, because a wrong rule
 actively degrades every AI edit in the project. The control-flow detector
@@ -333,9 +362,11 @@ already exists for it, but no step in PLAN.md ever calls it. The detector belong
 here; the git-hook wiring that drives it belongs to
 [Phase 5](PHASE-5.md) step 3.
 
-- [x] `pub fn contradictions(store: &RuleStore, path: &Path, after: &str) -> Result<Vec<String>>`
-      returning the ids of active rules whose `anti_pattern` appears in the new
-      content of a file their scope matches.
+- [x] `pub fn contradictions(store: &RuleStore, path: &Path, before: &str, after: &str) -> Result<Vec<String>>`
+      returning the ids of active rules whose `anti_pattern` occurs more often
+      in `after` than in `before`, in a file their scope matches. Comparing
+      against `before` is what keeps untouched legacy code from decaying a
+      rule on every commit that edits the same file (review finding B3).
 - [x] Match structurally where the detector that created the rule allows it, and
       fall back to normalised-whitespace substring matching otherwise. Require a
       confident match: a false contradiction silently deletes a correct rule,

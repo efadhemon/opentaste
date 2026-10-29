@@ -8,7 +8,7 @@ mod functions;
 mod imports;
 mod types;
 
-pub(crate) use arch::decorator_name;
+pub(crate) use arch::{decorator_name, is_custom_error, is_framework_decorator};
 
 use std::ops::AddAssign;
 
@@ -225,6 +225,21 @@ mod tests {
     }
 
     #[test]
+    fn aliases_an_interface_could_not_express_do_not_count() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+            interface A { id: string }
+            type Status = "open" | "closed";
+            type Handler = (event: string) => void;
+            type Keys = keyof A;
+            type Partial2 = Partial<A>;
+            "#,
+        );
+        assert_eq!(got.type_constructs, Count::from_sides(1, 0));
+    }
+
+    #[test]
     fn function_syntax_counts_declarations_against_const_arrows() {
         let got = tally(
             SupportedLanguage::TypeScript,
@@ -281,6 +296,64 @@ mod tests {
             "#,
         );
         assert_eq!(got.errors, Count::from_sides(2, 1));
+    }
+
+    #[test]
+    fn nestjs_built_in_exceptions_are_not_custom_errors() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+            throw new NotFoundException();
+            throw new BadRequestException("x");
+            throw new AggregateError([]);
+            "#,
+        );
+        assert_eq!(got.errors, Count::default());
+    }
+
+    #[test]
+    fn an_exception_imported_from_a_package_is_not_custom() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+            import { AxiosError } from "axios";
+            import { OrderError } from "@/orders/errors";
+            throw new AxiosError("x");
+            throw new OrderError("y");
+            "#,
+        );
+        assert_eq!(got.errors, Count::from_sides(1, 0));
+    }
+
+    #[test]
+    fn everyday_framework_decorators_are_not_project_specific() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+            class A {
+              @IsNotEmpty() a;
+              @InjectRepository(X) b;
+              @CreateDateColumn() c;
+              @HttpCode(200) d() {}
+            }
+            "#,
+        );
+        assert_eq!(got.decorators, Count::from_sides(0, 4));
+    }
+
+    #[test]
+    fn import_origin_decides_a_decorator_before_its_name() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+            import { Audited } from "some-audit-lib";
+            import { Entity } from "@/db/entity";
+            @Audited()
+            @Entity()
+            class A {}
+            "#,
+        );
+        assert_eq!(got.decorators, Count::from_sides(1, 1));
     }
 
     #[test]

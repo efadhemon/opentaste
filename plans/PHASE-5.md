@@ -121,8 +121,9 @@ clobber, and refuse rather than guess.
       resolution. It diffs `HEAD` against `HEAD~1`, feeds each changed source
       file's before/after through `diff::structural::analyze`, and runs
       [Phase 3](PHASE-3.md) step 6's `diff::contradiction::contradictions`
-      against the new content so `RuleStore::apply_contradiction` finally has a
-      caller. Broader "recent git history" mining, mentioned in SPEC.md section
+      with the same before/after pair so `RuleStore::apply_contradiction`
+      finally has a caller. It needs both sides: only an anti-pattern the
+      commit *added* counts, never legacy code that was already in the file. Broader "recent git history" mining, mentioned in SPEC.md section
       1, is **out of scope for v0.1** — record that here rather than
       half-building it.
 

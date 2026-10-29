@@ -15,7 +15,7 @@ use crate::models::{round2, CandidateRule, RuleCategory, RuleSource};
 use crate::storage::atomic::ensure_parent_dir;
 
 /// Schema version this build expects; bumped whenever a migration is added.
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 /// A recorded AST fingerprint for one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +94,20 @@ impl SqliteStore {
                     content_hash TEXT NOT NULL,
                     ast_signature TEXT NOT NULL,
                     captured_at TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+
+        if current < 2 {
+            // A rule the developer deleted. The scanner recomputes the same
+            // ratio on every run, so without this it would install the rule
+            // again on the next scan.
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS rejected_rules (
+                    id TEXT PRIMARY KEY,
+                    rejected_at TEXT NOT NULL
                 );
                 "#,
             )?;
@@ -190,6 +204,31 @@ impl SqliteStore {
             .conn
             .execute("DELETE FROM candidate_rules WHERE id = ?1", params![id])?;
         Ok(removed > 0)
+    }
+
+    /// Remember that the developer deleted the rule with this identifier.
+    pub fn reject(&self, id: &str) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO rejected_rules (id, rejected_at) VALUES (?1, ?2)
+            ON CONFLICT(id) DO UPDATE SET rejected_at = excluded.rejected_at
+            "#,
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Whether the developer deleted the rule with this identifier.
+    pub fn is_rejected(&self, id: &str) -> Result<bool> {
+        let found: Option<i32> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM rejected_rules WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
     }
 
     /// Number of stored candidates.
@@ -325,6 +364,25 @@ mod tests {
     }
 
     #[test]
+    fn a_version_one_database_gains_the_rejection_table_on_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cache.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE candidate_rules (id TEXT PRIMARY KEY);
+                 CREATE TABLE file_snapshots (file_path TEXT PRIMARY KEY);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let store = SqliteStore::open(&path).unwrap();
+        assert!(!store.is_rejected("imports-x").unwrap());
+        store.reject("imports-x").unwrap();
+        assert!(store.is_rejected("imports-x").unwrap());
+    }
+
+    #[test]
     fn a_fresh_database_has_both_tables_and_the_current_schema_version() {
         let store = SqliteStore::open_in_memory().unwrap();
         let version: i32 = store
@@ -333,7 +391,7 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
 
-        for table in ["candidate_rules", "file_snapshots"] {
+        for table in ["candidate_rules", "file_snapshots", "rejected_rules"] {
             let found: i32 = store
                 .connection()
                 .query_row(

@@ -86,3 +86,34 @@ fn gitignored_files_do_not_count_toward_the_support_floor() {
     assert_eq!(report.files_scanned, 9);
     assert!(report.outcomes.is_empty(), "{:?}", report.outcomes);
 }
+
+#[test]
+fn a_rule_the_developer_deleted_is_not_reinstalled_by_the_next_scan() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 10, 0);
+    let first = scan(&project.store).unwrap();
+    let id = first.outcomes[0].promoted().unwrap().id.clone();
+    assert!(project.store.delete_rule(&id).unwrap());
+
+    // A new file forces a fresh parse, so the ratio is recomputed, not cached.
+    project.write("src/alias_new.ts", "import { a } from \"@/lib/a\";\n");
+    let second = scan(&project.store).unwrap();
+    assert!(second.outcomes.is_empty(), "{:?}", second.outcomes);
+    assert!(project.store.rules().unwrap().find(&id).is_none());
+    assert!(project.store.candidate_rules().unwrap().is_empty());
+}
+
+#[test]
+fn vendored_built_and_declaration_files_are_never_scanned() {
+    let project = Project::with_cache_db();
+    project.write("src/app.ts", "export const a = 1;\n");
+    project.write("node_modules/pkg/index.ts", "export default 1;\n");
+    project.write("packages/ui/dist/index.js", "export default 1;\n");
+    project.write("build/out.js", "export default 1;\n");
+    project.write("src/types.d.ts", "export interface A {}\n");
+    project.write("public/vendor.min.js", "export default 1;\n");
+
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 1, "{report:?}");
+    assert_eq!(report.tallies.exports.files, 1);
+}
