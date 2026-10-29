@@ -38,9 +38,11 @@ jobs:
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
       - uses: actions/checkout@v5
+      # setup-node v5 caches automatically when package.json names a
+      # `packageManager`, and that cache step needs pnpm before Corepack has
+      # provided it. pnpm comes from Corepack in the next step instead.
       - uses: actions/setup-node@v5
-        with: { node-version: 24 }
-      # pnpm comes from the `packageManager` field through Corepack.
+        with: { node-version: 24, package-manager-cache: false }
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run typecheck
