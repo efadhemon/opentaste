@@ -149,8 +149,7 @@ step 5, where queries genuinely cannot express the shape.
 compose with rayon's `fold`/`reduce`, forcing a `Mutex` around the accumulator.
 Walking with the serial `ignore::Walk` and then driving `rayon::par_iter` over
 the collected paths uses both crates honestly, needs no lock, and the walk itself
-is not the bottleneck. The sub-300ms target in SPEC.md section 1 is comfortable
-either way.
+is not the bottleneck. Measured times are recorded in SPEC.md section 1.
 
 Wire up incremental rescanning here using `SqliteStore::get_snapshot`: skip any
 file whose content hash is unchanged since the last scan, and

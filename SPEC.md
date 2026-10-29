@@ -12,7 +12,7 @@
 
 It operates through three local intelligence loops:
 
-1. **Cold-Start AST Repo Scanner (`taste scan`):** Parses existing source files and recent Git history using native `tree-sitter` and `rayon` multi-threading to extract statistical codebase norms in `<300ms`.
+1. **Cold-Start AST Repo Scanner (`taste scan`):** Parses existing source files and recent Git history using native `tree-sitter` and `rayon` multi-threading to extract statistical codebase norms. A cold scan of a 134-file NestJS tree took 157 ms in a debug build. A cold scan of a 991-file tree took 321 ms in a release build, so `<300ms` holds for a small repository and is not a ceiling for every size.
 2. **Post-AI Structural Delta Learner (`taste learn-delta` + IDE Extension):** Detects when an AI agent generates code and the human developer subsequently edits/fixes that exact code block. It computes the AST diff (`AI Output -> Human Correction`) and extracts a candidate taste rule.
 3. **Host-Agent MCP Piggybacking (`taste mcp`):** Runs a lightweight `stdio` Model Context Protocol (MCP) server so the user's existing AI editor (Cursor/Claude) automatically saves explicit preferences into the local database whenever corrected in chat.
 
