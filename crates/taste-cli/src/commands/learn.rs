@@ -41,7 +41,7 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     let mut seen_before = 0usize;
     let mut from_editor = 0usize;
     for (path, added) in changed_files(&root) {
-        if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::is_script) {
+        if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::has_analyzers) {
             continue;
         }
         let before = if added || !has_parent {

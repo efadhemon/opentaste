@@ -291,6 +291,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    the tree away. Check `is_script()` first. Better still, skip non-script files
    in `scan` before reading them, since today they are read, hashed, parsed,
    and snapshotted for no counts at all.
+   **Status: done** in phase 7 step 8.
 4. **Read and hash in parallel.** `scan` reads and SHA-256-hashes every file in
    the serial loop, and only the parse runs on rayon. Moving the read, hash and
    snapshot lookup into `par_iter` (the snapshot lookup is a cheap SQLite read,
@@ -298,6 +299,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    release time on the 991-file tree get closer to the spec.
 5. **Stale snapshots.** Snapshot rows for deleted files are never removed.
    Prune paths the walk did not see.
+   **Status: done** in phase 7 step 8.
 6. **Monorepo scope.** `scope_for_path("apps/api/src/x.service.ts")` gives
    `apps/**/*.service.ts`, which covers every app. For monorepos, consider
    scoping to the nearest directory that has a `package.json`.
@@ -312,6 +314,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    **Status: done** in phase 7 step 2.
 9. **Doc mismatch.** `MAX_FILE_BYTES` says files "at or above" the size are
    skipped, but the code uses `>`.
+   **Status: done** in phase 7 step 8.
 10. **Exports counting.** Re-export barrels (`export * from`, `export { x } from`)
     and `export type {…}` count as named exports. That is defensible, but it
     inflates the "named" side in barrel-heavy projects. Consider excluding

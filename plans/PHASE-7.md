@@ -145,14 +145,17 @@ extension treats any edit that is not itself a burst as a correction.
 
 ## Step 8: Scan hygiene (W10, W11, W12)
 
-- [ ] Snapshot rows for files the walk no longer sees are deleted at the end
-      of a scan.
-- [ ] Files in a language with no analyzers are skipped before they are read.
-      The check goes through one function, so phase 8 turns languages on in
-      one place.
-- [ ] The `MAX_FILE_BYTES` doc comment matches the `>` comparison.
-- [ ] Tests: deleting a file removes its snapshot after the next scan; a Rust
-      file is not read or snapshotted while Rust has no analyzers.
+- [x] Snapshot rows for files the walk no longer sees are deleted at the end
+      of a scan (`SqliteStore::retain_snapshots`). That includes a file that
+      grew past the size limit or stopped being UTF-8, whose old tally would
+      otherwise have kept counting.
+- [x] Files in a language with no analyzers are skipped before they are read.
+      The check is `SupportedLanguage::has_analyzers`, used by the scanner
+      and the post-commit hook; phase 8 turns a language on there.
+- [x] The `MAX_FILE_BYTES` doc comment matches the `>` comparison.
+- [x] Tests: deleting a file removes its snapshot after the next scan; a file
+      grown past the limit stops counting; Rust and Python files are not read
+      or snapshotted. All three fail without the change.
 
 ## Step 9: The full test set
 

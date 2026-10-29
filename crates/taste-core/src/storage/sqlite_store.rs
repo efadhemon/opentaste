@@ -5,6 +5,7 @@
 //! skip unchanged files. Keeping them out of git is what lets OpenTaste observe
 //! aggressively without generating review noise.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -371,6 +372,22 @@ impl SqliteStore {
                 })
             })
             .transpose()
+    }
+
+    /// Delete the fingerprint of every file not in `keep`, returning how many
+    /// went. The scanner passes the files its walk saw, so deleted, renamed
+    /// and newly ignored files stop contributing stale tallies.
+    pub fn retain_snapshots(&self, keep: &HashSet<String>) -> Result<usize> {
+        let mut removed = 0;
+        for snapshot in self.list_snapshots()? {
+            if !keep.contains(&snapshot.file_path) {
+                removed += self.conn.execute(
+                    "DELETE FROM file_snapshots WHERE file_path = ?1",
+                    params![snapshot.file_path],
+                )?;
+            }
+        }
+        Ok(removed)
     }
 
     /// Every recorded fingerprint, ordered by path.

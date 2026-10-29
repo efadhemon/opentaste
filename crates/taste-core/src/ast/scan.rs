@@ -8,7 +8,7 @@
 //! are recorded before snapshots: a crash in between re-scans the files
 //! instead of permanently skipping a promotion that never landed.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -29,8 +29,8 @@ use super::parser::content_hash;
 use super::promote;
 use super::{analyze_source, SupportedLanguage, Tally};
 
-/// Files at or above this size are skipped. A megabyte is far past a source
-/// file the statistical detectors can usefully read.
+/// Files larger than this are skipped. A megabyte is far past a source file
+/// the statistical detectors can usefully read.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// What one cold-start scan did.
@@ -63,6 +63,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     let mut cached: Vec<Tally> = Vec::new();
     let mut files_skipped = 0usize;
     let mut unchanged = 0usize;
+    let mut seen = HashSet::new();
 
     for entry in WalkBuilder::new(root)
         .standard_filters(true)
@@ -78,7 +79,10 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
             continue;
         };
         let path = entry.path();
-        let Some(lang) = SupportedLanguage::from_path(path) else {
+        // Checked before anything is read: a language with no analyzers would
+        // be read, hashed, parsed and snapshotted for no counts at all.
+        let Some(lang) = SupportedLanguage::from_path(path).filter(|lang| lang.has_analyzers())
+        else {
             continue;
         };
         let Ok(metadata) = entry.metadata() else {
@@ -105,6 +109,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         };
         let hash = content_hash(source.as_bytes());
         let relative = relative_key(root, path);
+        seen.insert(relative.clone());
         if let Some(snapshot) = store.candidates().get_snapshot(&relative)? {
             if snapshot.content_hash == hash {
                 if let Some(tally) = decode_tally(&snapshot.ast_signature) {
@@ -160,6 +165,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
             captured_at,
         })?;
     }
+    store.candidates().retain_snapshots(&seen)?;
 
     Ok(ScanReport {
         files_scanned,

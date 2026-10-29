@@ -226,3 +226,77 @@ fn a_package_outside_the_workspace_globs_is_not_read() {
         .detected_stack
         .is_empty());
 }
+
+#[test]
+fn a_deleted_file_loses_its_snapshot_on_the_next_scan() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 2, 0);
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias1.ts")
+        .unwrap()
+        .is_some());
+
+    std::fs::remove_file(project.dir.path().join("src/alias1.ts")).unwrap();
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias1.ts")
+        .unwrap()
+        .is_none());
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias0.ts")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn a_file_that_grows_past_the_size_limit_stops_counting() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    scan(&project.store).unwrap();
+    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 1);
+
+    let big = format!(
+        "import {{ a }} from \"@/lib/a\";\n{}",
+        "// padding\n".repeat(120_000)
+    );
+    project.write("src/alias0.ts", &big);
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias0.ts")
+        .unwrap()
+        .is_none());
+    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 0);
+}
+
+#[test]
+fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    project.write("src/main.rs", "fn main() {}\n");
+    project.write("tools/gen.py", "print('hi')\n");
+
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.files_skipped, 0);
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/main.rs")
+        .unwrap()
+        .is_none());
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("tools/gen.py")
+        .unwrap()
+        .is_none());
+}
