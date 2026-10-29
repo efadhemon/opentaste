@@ -140,6 +140,25 @@ flowchart LR
   P3 --> P5
   P4 --> P5
   P5 --> P6
+  P7["Phase 7: correctness"]
+  P8["Phase 8: Python, Rust, Go"]
+  P9["Phase 9: TS detectors"]
+  P10["Phase 10: git history"]
+  P11["Phase 11: global rules"]
+  P12["Phase 12: dashboard + speed"]
+  P13["Phase 13: docs + website"]
+  P14["Phase 14: release v1.0.0"]
+  P6 --> P7
+  P7 --> P8
+  P7 --> P9
+  P7 --> P11
+  P8 --> P10
+  P9 --> P10
+  P8 --> P12
+  P10 --> P13
+  P11 --> P13
+  P12 --> P13
+  P13 --> P14
 ```
 
 | Phase | File | Blocked by | Blocks |
@@ -148,12 +167,25 @@ flowchart LR
 | 3 — AST scanner, structural diff | [plans/PHASE-3.md](plans/PHASE-3.md) | 0 | 5, 6 |
 | 4 — stdio MCP server | [plans/PHASE-4.md](plans/PHASE-4.md) | 0 | 5 |
 | 5 — CLI and TUI | [plans/PHASE-5.md](plans/PHASE-5.md) | 0, 3, 4 | 6 |
-| 6 — extension and npm wrapper | [plans/PHASE-6.md](plans/PHASE-6.md) | 0, 3, 5 | nothing |
+| 6 — extension and npm wrapper | [plans/PHASE-6.md](plans/PHASE-6.md) | 0, 3, 5 | 7 (its release gates move to 14) |
+| 7 — correctness | [plans/PHASE-7.md](plans/PHASE-7.md) | 6 | 8, 9, 11 |
+| 8 — Python, Rust, Go | [plans/PHASE-8.md](plans/PHASE-8.md) | 7 | 10, 12 |
+| 9 — strict null, zod, DI | [plans/PHASE-9.md](plans/PHASE-9.md) | 7 | 10 |
+| 10 — recent git history | [plans/PHASE-10.md](plans/PHASE-10.md) | 7, 8, 9 | 13 |
+| 11 — cross-project rules | [plans/PHASE-11.md](plans/PHASE-11.md) | 7 | 13 |
+| 12 — dashboard edit, highlighting, speed | [plans/PHASE-12.md](plans/PHASE-12.md) | 7 (steps 1–2), 8 (step 3) | 13 |
+| 13 — docs and website | [plans/PHASE-13.md](plans/PHASE-13.md) | 8–12 | 14 |
+| 14 — release v1.0.0 | [plans/PHASE-14.md](plans/PHASE-14.md) | 7–13 | nothing |
 
 Phase 0 lives inside the phase 3 file because it has to happen before any other
 work, and phase 3 is the first numbered file. **If you start with phase 4
 instead, execute part 0 of the phase 3 file first anyway.** Phases 3 and 4 do not
 depend on each other and may be built in either order or in parallel.
+
+Phases 7 to 14 come from [plans/V1-AUDIT.md](plans/V1-AUDIT.md), and
+[plans/V1-TRACEABILITY.md](plans/V1-TRACEABILITY.md) maps every SPEC.md claim
+to the code or phase step that delivers it. Phases 8, 9 and 11 do not depend
+on each other once phase 7 is in.
 
 Two artefacts cross a phase boundary and must not be changed unilaterally:
 
