@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::config::SCHEMA_URL;
 use crate::error::{Error, Result};
 use crate::models::RulesFile;
 use crate::storage::atomic::{read_to_string_opt, write_if_changed};
@@ -51,8 +52,12 @@ impl JsonStore {
     }
 
     /// Serialise the rule set exactly as [`JsonStore::save`] would write it.
+    ///
+    /// The `$schema` URL is always the current one, so a file written when it
+    /// pointed somewhere else is corrected the next time it is saved.
     pub fn render(&self, rules: &RulesFile) -> Result<String> {
         let mut canonical = rules.clone();
+        canonical.schema = SCHEMA_URL.to_string();
         canonical.sort();
         let mut json =
             serde_json::to_string_pretty(&canonical).map_err(|e| Error::json(&self.path, e))?;
@@ -157,6 +162,19 @@ mod tests {
         assert!(raw.contains(r#""confidence": 0.95"#), "{raw}");
 
         assert_eq!(store.load().unwrap(), file);
+    }
+
+    #[test]
+    fn saving_replaces_an_outdated_schema_url_with_the_current_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = JsonStore::new(tmp.path().join("rules.json"));
+        let mut file = RulesFile::with_rules([rule("arch-thing")]);
+        file.schema = "https://opentaste.dev/schema/v1.json".to_string();
+        store.save(&file).unwrap();
+
+        let raw = std::fs::read_to_string(store.path()).unwrap();
+        assert!(!raw.contains("opentaste.dev"), "{raw}");
+        assert_eq!(store.load().unwrap().schema, SCHEMA_URL);
     }
 
     #[test]

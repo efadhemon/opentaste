@@ -94,7 +94,7 @@ fn a_hand_written_rule_file_loads_and_normalises() {
     project.write(
         ".taste/rules.json",
         r#"{
-  "$schema": "https://opentaste.dev/schema/v1.json",
+  "$schema": "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json",
   "version": "1.0.0",
   "project_context": {
     "detected_stack": ["typescript"],

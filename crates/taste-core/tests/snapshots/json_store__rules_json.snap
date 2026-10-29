@@ -3,7 +3,7 @@ source: crates/taste-core/tests/json_store.rs
 expression: raw
 ---
 {
-  "$schema": "https://opentaste.dev/schema/v1.json",
+  "$schema": "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json",
   "version": "1.0.0",
   "project_context": {
     "detected_stack": [

@@ -130,7 +130,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["OpenTaste Contributors"]
-repository = "[https://github.com/opentaste/opentaste](https://github.com/opentaste/opentaste)"
+repository = "https://github.com/efadhemon/opentaste"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -167,7 +167,7 @@ Sorted deterministically by `id` to prevent Git merge conflicts.
 
 ```json
 {
-  "$schema": "[https://opentaste.dev/schema/v1.json](https://opentaste.dev/schema/v1.json)",
+  "$schema": "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json",
   "version": "1.0.0",
   "project_context": {
     "detected_stack": ["typescript", "nestjs", "react", "postgresql"],

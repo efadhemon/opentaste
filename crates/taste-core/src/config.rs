@@ -23,8 +23,10 @@ pub const CURSOR_RULE_PREFIX: &str = "opentaste-";
 /// Extension Cursor expects for rule files.
 pub const CURSOR_RULE_EXTENSION: &str = "mdc";
 
-/// Schema URL embedded in `.taste/rules.json`.
-pub const SCHEMA_URL: &str = "https://opentaste.dev/schema/v1.json";
+/// Schema URL embedded in `.taste/rules.json`, served from `schema/v1.json`
+/// in this repository.
+pub const SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json";
 /// Schema version embedded in `.taste/rules.json`.
 pub const SCHEMA_VERSION: &str = "1.0.0";
 
