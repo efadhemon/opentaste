@@ -43,6 +43,26 @@ Also available: `promote_candidate`, `set_enabled`, `delete_rule`,
 `upsert_snapshot` / `get_snapshot`), and `storage::validate_scope` for globs
 arriving from outside the codebase.
 
+## Branches
+
+```text
+feature/fix branch ──PR──▶ dev ──PR──▶ main ──tag v*──▶ release
+```
+
+- **`dev`** is the integration branch. Every feature or fix branch starts from
+  `dev` and opens its pull request against `dev`. Before opening one, bring
+  the branch up to date with `dev` so it is tested against everything else
+  that is about to ship.
+- **`main`** only receives pull requests from `dev`, when a release is ready.
+  It is what users install from and what the website deploys.
+- **Release tags (`v*`) are only ever cut on `main`.** `release.yml` publishes
+  whatever commit a tag points at, so a tag on `dev` would publish unreleased
+  work.
+- CI runs on every pull request and on pushes to both `dev` and `main`. Never
+  merge into either one on a red run.
+- A fix that must reach `main` before the next release still goes through
+  `dev`: merge it into `dev`, then open the `dev` → `main` pull request.
+
 ## Plan file workflow
 
 Each phase has one file in `plans/`. The header of every file looks like this:
