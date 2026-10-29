@@ -73,14 +73,40 @@ jobs:
       - run: cargo check --workspace --all-targets
 ```
 
-**Windows matters more than usual here.** Three things in the finished code have
-never executed on Windows: the CRLF handling in `transpiler/marker.rs`, the
-backslash normalisation in `normalize_path` in `storage/mod.rs`, and the
-`std::fs::File::lock` advisory lock in `storage/lock.rs`. Of the three, the CRLF
-logic is the best defended — `marker.rs` has tests that feed it literal `\r\n`
-input — so the likelier failures are the lock, which behaves differently on
-Windows, and path handling under real backslash-separated paths. Expect the first
-red build to be Windows and treat it as a real bug, not a CI quirk.
+**Windows matters more than usual here.** Nothing in the workspace is
+platform-locked — there is not a single `#[cfg(unix)]` or `#[cfg(windows)]`
+branch — but every one of the 148 tests has only ever run on Linux. Four things
+have never executed on Windows: the CRLF handling in `transpiler/marker.rs`, the
+backslash normalisation in `normalize_path` in `storage/mod.rs`, the
+`std::fs::File::lock` advisory lock in `storage/lock.rs`, and the rename in
+`storage/atomic.rs`. The CRLF logic is the best defended of the four, since
+`marker.rs` has tests that feed it literal `\r\n` input. Expect the first red
+build to be Windows and treat it as a real bug, not a CI quirk.
+
+**The most likely single failure is `fs::rename` in `atomic.rs`.** On Windows,
+renaming over a file another process holds open fails with a sharing violation,
+and antivirus scanners take transient handles on files as they are written. This
+is the classic cause of intermittent "Access is denied" in Windows CI, and
+`write_atomic` currently has no retry.
+
+- [ ] If Windows CI shows it, add a short bounded retry to `write_atomic` —
+      a handful of attempts with a few milliseconds between them — rather than
+      abandoning the temp-file-and-rename approach, which is what gives the sync
+      its crash safety. Keep the retry in `atomic.rs` so every target inherits
+      it. It is an intermittent failure, so a green first run does not mean the
+      problem is absent; re-run the job before concluding it is.
+
+Two further notes on platform behaviour, neither of which needs action but both
+of which are easy to "fix" wrongly later:
+
+- The lock deliberately guards a dedicated `.taste/.lock` file rather than
+  `rules.json` itself. `LockFileEx` on Windows is mandatory rather than
+  advisory, so locking the rule file directly would block any process trying to
+  read it. Do not simplify this away.
+- `rusqlite` is declared with `bundled`, so every platform compiles SQLite from
+  C and needs a C toolchain to build from source: MSVC on Windows, Xcode command
+  line tools on macOS. End users installing through
+  [Phase 6](PHASE-6.md)'s npm wrapper get prebuilt binaries and need neither.
 
 **Gate for part 0:** all four jobs green on `main`.
 

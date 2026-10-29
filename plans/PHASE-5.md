@@ -110,7 +110,10 @@ clobber, and refuse rather than guess.
       unchanged, which is most of what keeps the watcher from reacting to its own
       output, but **still filter OpenTaste's own target paths explicitly** rather
       than relying on that alone. Read the target list from `config::Paths` so it
-      cannot drift.
+      cannot drift. Tune the debounce window on macOS as well as Linux: `notify`
+      uses FSEvents there and inotify here, and the two coalesce events
+      differently, so a window that feels right on one can double-fire on the
+      other.
 - [ ] `learn --from-git-head` — the command the `post-commit` hook installed in
       step 2 actually invokes. SPEC.md section 8 specifies the hook as
       `taste learn --from-git-head &`, but PLAN.md's command list omits `learn`
@@ -190,6 +193,10 @@ difference between a tested dashboard and a hand-tested one.
       `set_enabled`, `promote_candidate`, `delete_rule` and `sync`.
 - [ ] Require a confirmation keystroke for `[d]`. Deletion is the one
       irreversible action in the dashboard.
+- [ ] Check the `[✓]`, `[?]` and `█` glyphs on Windows. The legacy conhost with
+      a non-UTF-8 codepage renders them as mojibake; Windows Terminal is fine.
+      Either accept that and say so, or keep an ASCII fallback — but decide,
+      rather than finding out from a bug report.
 
 **Hazard: install a panic hook that restores the terminal** — leaving raw mode
 and the alternate screen — **before any `ratatui` code runs**, and chain to the
