@@ -162,13 +162,13 @@ extension treats any edit that is not itself a burst as a correction.
 The complete list this phase cannot ship without. Each was written with its
 step.
 
-- [ ] Demotion through two contradictions; disabled rules untouched.
-- [ ] Decorator contradiction by name, and its three negatives.
-- [ ] Cross-source counting: once for the same correction, twice for two.
-- [ ] Monorepo scope, workspace stack, `typescript` and database detection.
-- [ ] Barrel files count nothing.
-- [ ] Glued vendor keys redacted.
-- [ ] Snapshot pruning; unsupported languages not read.
+- [x] Demotion through two contradictions; disabled rules untouched.
+- [x] Decorator contradiction by name, and its three negatives.
+- [x] Cross-source counting: once for the same correction, twice for two.
+- [x] Monorepo scope, workspace stack, `typescript` and database detection.
+- [x] Barrel files count nothing.
+- [x] Glued vendor keys redacted.
+- [x] Snapshot pruning; unsupported languages not read.
 
 ---
 
