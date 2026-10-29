@@ -354,10 +354,33 @@ impl RuleStore {
         Ok(removed)
     }
 
+    /// Create `.taste/rules.json` holding an empty rule set when it does not
+    /// exist yet, as `taste init` does. An existing file is never touched.
+    ///
+    /// Returns `true` when the file was created.
+    pub fn ensure_rules_file(&self) -> Result<bool> {
+        let _guard = self.lock()?;
+        if self.json.exists() {
+            return Ok(false);
+        }
+        self.json.save(&RulesFile::default())?;
+        Ok(true)
+    }
+
     /// Replace the recorded project context, as `taste scan` does.
+    ///
+    /// When the stack and file count are what the file already says, nothing
+    /// is written: `rules.json` is git-tracked, and a fresh `last_updated` on
+    /// every scan would make it change on every run with nothing to review.
     pub fn set_project_context(&self, context: ProjectContext) -> Result<()> {
         let _guard = self.lock()?;
         let mut rules = self.json.load()?;
+        let current = &rules.project_context;
+        let same = current.detected_stack == context.detected_stack
+            && current.total_files_scanned == context.total_files_scanned;
+        if same && self.json.exists() {
+            return Ok(());
+        }
         rules.project_context = context;
         self.json.save(&rules)?;
         Ok(())
@@ -848,6 +871,55 @@ mod tests {
         }
         assert_eq!(store.rules().unwrap().rules.len(), 1);
         assert!(store.candidate_rules().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_unchanged_project_context_does_not_rewrite_the_tracked_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store(tmp.path());
+        let context = |files: usize| ProjectContext {
+            detected_stack: vec!["react".to_string()],
+            total_files_scanned: files,
+            last_updated: Utc::now(),
+        };
+        store.set_project_context(context(10)).unwrap();
+        let first = std::fs::read_to_string(&store.paths().rules_json).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        store.set_project_context(context(10)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&store.paths().rules_json).unwrap(),
+            first
+        );
+
+        store.set_project_context(context(11)).unwrap();
+        assert_ne!(
+            std::fs::read_to_string(&store.paths().rules_json).unwrap(),
+            first
+        );
+    }
+
+    #[test]
+    fn ensuring_the_rules_file_creates_it_once_and_never_resets_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = store(tmp.path());
+        assert!(store.ensure_rules_file().unwrap());
+        assert!(store.paths().rules_json.exists());
+
+        store
+            .record_observation(Observation::new(
+                RuleCategory::Testing,
+                "**/*.spec.ts",
+                RuleSource::Manual,
+                "Co-locate spec files beside the implementation",
+            ))
+            .unwrap();
+        assert!(!store.ensure_rules_file().unwrap());
+        assert_eq!(
+            store.rules().unwrap().rules.len(),
+            1,
+            "an existing file is kept"
+        );
     }
 
     #[test]

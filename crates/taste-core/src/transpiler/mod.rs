@@ -75,16 +75,43 @@ pub fn sync_all(paths: &Paths, rules: &[TasteRule]) -> Result<SyncReport> {
     Ok(report)
 }
 
+/// What [`sync_all`] would do with `rules`, without writing anything.
+///
+/// `written` lists the targets that are stale (a sync would rewrite them),
+/// `unchanged` the ones already up to date, and `removed` the ones a sync
+/// would delete or strip. `taste status` reports from this.
+pub fn check_all(paths: &Paths, rules: &[TasteRule]) -> Result<SyncReport> {
+    let active: Vec<TasteRule> = rules.iter().filter(|r| r.is_active()).cloned().collect();
+
+    let mut report = SyncReport::default();
+    cursor_mdc::check(paths, &active, &mut report)?;
+    let body = render::sections(&active);
+    for path in paths.marker_targets() {
+        let existing = crate::storage::atomic::read_to_string_opt(&path)?;
+        if active.is_empty() {
+            let has_block = match &existing {
+                Some(existing) => marker::strip(existing, &path)?.is_some(),
+                None => false,
+            };
+            if has_block {
+                report.removed.push(path);
+            }
+            continue;
+        }
+        let existing = existing.unwrap_or_default();
+        let updated = marker::inject(&existing, &body, &path)?;
+        report.record(path, updated != existing);
+    }
+    Ok(report)
+}
+
 /// Remove every OpenTaste block and generated file, as `taste uninstall` would.
 ///
 /// Developer-written content in the shared files is preserved.
 pub fn clear_all(paths: &Paths) -> Result<SyncReport> {
     let mut report = SyncReport::default();
     cursor_mdc::sync(paths, &[], &mut report)?;
-    for path in [paths.claude_md(), paths.windsurf_rules()]
-        .into_iter()
-        .chain(agents_md::targets(paths))
-    {
+    for path in paths.marker_targets() {
         if marker::clear_block(&path)? {
             report.removed.push(path);
         }
@@ -132,6 +159,84 @@ mod tests {
                 .unwrap()
                 .with_timezone(&Utc),
         }
+    }
+
+    fn snapshot(root: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    files.push((path.clone(), std::fs::read(&path).unwrap()));
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn checking_reports_what_a_sync_would_do_and_writes_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::for_root(tmp.path());
+        std::fs::write(paths.claude_md(), "# Mine\n").unwrap();
+        let rules = [rule(
+            "imports-alias",
+            RuleCategory::Imports,
+            "**/*.ts",
+            "Prefer path aliases",
+        )];
+
+        let before = snapshot(tmp.path());
+        let pending = check_all(&paths, &rules).unwrap();
+        assert_eq!(snapshot(tmp.path()), before, "a check must not write");
+        assert!(pending.unchanged.is_empty(), "{pending:?}");
+        assert!(pending.written.contains(&paths.claude_md()), "{pending:?}");
+
+        let synced = sync_all(&paths, &rules).unwrap();
+        assert_eq!(
+            pending.written, synced.written,
+            "the check predicts the sync"
+        );
+
+        let after = check_all(&paths, &rules).unwrap();
+        assert!(
+            after.written.is_empty() && after.removed.is_empty(),
+            "{after:?}"
+        );
+        assert_eq!(after.unchanged.len(), synced.written.len());
+    }
+
+    #[test]
+    fn checking_with_no_rules_reports_the_blocks_a_sync_would_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let paths = Paths::for_root(tmp.path());
+        let rules = [rule(
+            "imports-alias",
+            RuleCategory::Imports,
+            "**/*.ts",
+            "Prefer path aliases",
+        )];
+        sync_all(&paths, &rules).unwrap();
+        let stray = paths.cursor_rules_dir().join("opentaste-retired.mdc");
+        std::fs::write(&stray, "old").unwrap();
+
+        let pending = check_all(&paths, &[]).unwrap();
+        assert!(pending.removed.contains(&paths.claude_md()), "{pending:?}");
+        assert!(pending.removed.contains(&stray), "{pending:?}");
+        assert!(
+            pending
+                .removed
+                .contains(&cursor_mdc::file_for(&paths, RuleCategory::Imports)),
+            "{pending:?}"
+        );
+        assert!(
+            stray.exists() && paths.claude_md().exists(),
+            "a check must not delete"
+        );
     }
 
     #[test]

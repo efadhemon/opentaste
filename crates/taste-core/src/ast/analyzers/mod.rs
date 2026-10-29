@@ -81,6 +81,59 @@ impl AddAssign for Tally {
     }
 }
 
+/// One measured choice, labelled for display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Dimension {
+    pub name: &'static str,
+    /// What [`Count::left`] counts.
+    pub left: &'static str,
+    /// What [`Count::right`] counts.
+    pub right: &'static str,
+    pub count: Count,
+}
+
+impl Tally {
+    /// Every dimension with human-readable labels, in a stable order, so
+    /// `taste status` can show *why* a rule was or was not inferred.
+    pub fn dimensions(&self) -> [Dimension; 7] {
+        let dimension = |name, left, right, count| Dimension {
+            name,
+            left,
+            right,
+            count,
+        };
+        [
+            dimension(
+                "imports",
+                "path aliases",
+                "deep relative",
+                self.import_paths,
+            ),
+            dimension("exports", "named", "default", self.exports),
+            dimension(
+                "object types",
+                "interface",
+                "type alias",
+                self.type_constructs,
+            ),
+            dimension(
+                "functions",
+                "declarations",
+                "const arrows",
+                self.function_syntax,
+            ),
+            dimension(
+                "control flow",
+                "guard clauses",
+                "if/else",
+                self.control_flow,
+            ),
+            dimension("decorators", "project", "framework", self.decorators),
+            dimension("errors", "custom", "bare Error", self.errors),
+        ]
+    }
+}
+
 /// Persist a per-file tally in `file_snapshots.ast_signature`.
 ///
 /// Incremental rescans skip the parse but still have to fold the file into the

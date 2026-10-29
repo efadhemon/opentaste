@@ -290,6 +290,35 @@ impl SqliteStore {
             .transpose()
     }
 
+    /// Every recorded fingerprint, ordered by path.
+    pub fn list_snapshots(&self) -> Result<Vec<FileSnapshot>> {
+        let mut stmt = self.conn.prepare(
+            r#"
+            SELECT file_path, content_hash, ast_signature, captured_at
+            FROM file_snapshots ORDER BY file_path
+            "#,
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut snapshots = Vec::new();
+        for row in rows {
+            let (file_path, content_hash, ast_signature, captured_at) = row?;
+            snapshots.push(FileSnapshot {
+                file_path,
+                content_hash,
+                ast_signature,
+                captured_at: parse_timestamp(&captured_at)?,
+            });
+        }
+        Ok(snapshots)
+    }
+
     /// Borrow the underlying connection, for callers needing custom queries.
     pub fn connection(&self) -> &Connection {
         &self.conn

@@ -18,6 +18,11 @@ pub const LOCK_FILE: &str = ".lock";
 /// Cross-project rules in the user's home directory.
 pub const GLOBAL_DB_FILE: &str = "global.db";
 
+/// Filename prefix of a generated Cursor rule file, `opentaste-<category>.mdc`.
+pub const CURSOR_RULE_PREFIX: &str = "opentaste-";
+/// Extension Cursor expects for rule files.
+pub const CURSOR_RULE_EXTENSION: &str = "mdc";
+
 /// Schema URL embedded in `.taste/rules.json`.
 pub const SCHEMA_URL: &str = "https://opentaste.dev/schema/v1.json";
 /// Schema version embedded in `.taste/rules.json`.
@@ -112,6 +117,42 @@ impl Paths {
             .join("copilot-instructions.md")
     }
 
+    /// Shared, developer-owned files the transpiler keeps one marker block in.
+    ///
+    /// Together with the generated files under [`Paths::cursor_rules_dir`],
+    /// this is the complete set of transpiler targets. The file watcher and
+    /// the editor extension exclude exactly these, so it lives in one place.
+    pub fn marker_targets(&self) -> [PathBuf; 4] {
+        [
+            self.claude_md(),
+            self.windsurf_rules(),
+            self.agents_md(),
+            self.copilot_instructions(),
+        ]
+    }
+
+    /// Whether `path`, absolute or relative to the project root, is a file the
+    /// transpiler writes. Reacting to these would make a watcher answer its
+    /// own output.
+    pub fn is_generated_target(&self, path: &Path) -> bool {
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.project_root.join(path)
+        };
+        if self.marker_targets().contains(&path) {
+            return true;
+        }
+        let in_cursor_dir = path.parent() == Some(self.cursor_rules_dir().as_path());
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        in_cursor_dir
+            && name.starts_with(CURSOR_RULE_PREFIX)
+            && name.ends_with(&format!(".{CURSOR_RULE_EXTENSION}"))
+    }
+
     /// Render a path relative to the project root for display, falling back to
     /// the absolute path when it lies outside the project.
     pub fn relativize<'a>(&self, path: &'a Path) -> &'a Path {
@@ -122,6 +163,20 @@ impl Paths {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_transpiler_target_is_recognised_and_nothing_else_is() {
+        let paths = Paths::for_root("/tmp/proj");
+        for target in paths.marker_targets() {
+            assert!(paths.is_generated_target(&target), "{target:?}");
+        }
+        assert!(paths.is_generated_target(Path::new("CLAUDE.md")));
+        assert!(paths.is_generated_target(Path::new(".cursor/rules/opentaste-imports.mdc")));
+        assert!(!paths.is_generated_target(Path::new(".cursor/rules/team.mdc")));
+        assert!(!paths.is_generated_target(Path::new("src/opentaste-imports.mdc")));
+        assert!(!paths.is_generated_target(Path::new("docs/CLAUDE.md")));
+        assert!(!paths.is_generated_target(Path::new("src/app.ts")));
+    }
 
     #[test]
     fn for_root_derives_every_path() {

@@ -9,7 +9,7 @@ mod promote;
 mod query;
 mod scan;
 
-pub use analyzers::{analyze_source, Count, Tally};
+pub use analyzers::{analyze_source, Count, Dimension, Tally};
 pub(crate) use analyzers::{decorator_name, is_custom_error, is_framework_decorator};
 pub use parser::{content_hash, parse, SupportedLanguage};
 pub use promote::{
@@ -21,4 +21,4 @@ pub use promote::{
 pub(crate) use query::{
     import_locals, is_package_specifier, matches, node_text, unquote, ScriptQuery,
 };
-pub use scan::{scan, ScanReport};
+pub use scan::{scan, stored_tally, ScanReport};

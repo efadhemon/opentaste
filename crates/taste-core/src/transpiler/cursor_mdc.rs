@@ -14,9 +14,9 @@ use crate::transpiler::render::{self, MATCH_ALL_SCOPE};
 use crate::transpiler::SyncReport;
 
 /// Filename prefix identifying a generated Cursor rule file.
-pub const FILE_PREFIX: &str = "opentaste-";
+pub const FILE_PREFIX: &str = crate::config::CURSOR_RULE_PREFIX;
 /// Extension Cursor expects for rule files.
-pub const FILE_EXTENSION: &str = "mdc";
+pub const FILE_EXTENSION: &str = crate::config::CURSOR_RULE_EXTENSION;
 
 /// Path of the generated file for one category.
 pub fn file_for(paths: &Paths, category: RuleCategory) -> PathBuf {
@@ -49,31 +49,61 @@ pub fn sync(paths: &Paths, active: &[TasteRule], report: &mut SyncReport) -> Res
     Ok(())
 }
 
+/// What [`sync`] would do, without touching the disk.
+pub fn check(paths: &Paths, active: &[TasteRule], report: &mut SyncReport) -> Result<()> {
+    let grouped = render::group_by_category(active);
+    for (category, rules) in &grouped {
+        let path = file_for(paths, *category);
+        let expected = render_file(*category, rules);
+        let current = std::fs::read(&path).ok();
+        report.record(path, current.as_deref() != Some(expected.as_bytes()));
+    }
+    for category in RuleCategory::ALL {
+        let path = file_for(paths, category);
+        if !grouped.contains_key(&category) && path.exists() {
+            report.removed.push(path);
+        }
+    }
+    report
+        .removed
+        .extend(unknown_files(&paths.cursor_rules_dir()));
+    Ok(())
+}
+
 /// Remove generated files whose category this build no longer recognises.
 ///
 /// Without this, renaming or retiring a category would strand a file that the
 /// editor keeps reading forever, with nothing left to regenerate or delete it.
 fn prune_unknown(dir: &Path, report: &mut SyncReport) -> Result<()> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
-    };
+    for path in unknown_files(dir) {
+        if remove_if_present(&path)? {
+            report.removed.push(path);
+        }
+    }
+    Ok(())
+}
 
+/// Generated-looking files in `dir` whose category this build does not know.
+fn unknown_files(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let known: Vec<String> = RuleCategory::ALL
         .iter()
         .map(|c| format!("{FILE_PREFIX}{}.{FILE_EXTENSION}", c.slug()))
         .collect();
-
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_ours = name.starts_with(FILE_PREFIX) && name.ends_with(FILE_EXTENSION);
-        if is_ours && !known.contains(&name) {
-            let path = entry.path();
-            if remove_if_present(&path)? {
-                report.removed.push(path);
-            }
-        }
-    }
-    Ok(())
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with(FILE_PREFIX)
+                && name.ends_with(FILE_EXTENSION)
+                && !known.contains(&name)
+        })
+        .map(|entry| entry.path())
+        .collect();
+    found.sort();
+    found
 }
 
 /// Render the complete contents of one category's `.mdc` file.

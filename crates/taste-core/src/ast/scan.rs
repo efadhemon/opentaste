@@ -211,6 +211,22 @@ fn is_generated(path: &Path, file_type: Option<std::fs::FileType>) -> bool {
         .any(|suffix| lower.ends_with(suffix))
 }
 
+/// The repository tally as of the last scan, read back from the snapshot
+/// cache without parsing anything. Files deleted since that scan are left out.
+pub fn stored_tally(store: &RuleStore) -> Result<Tally> {
+    let root = &store.paths().project_root;
+    let mut tally = Tally::default();
+    for snapshot in store.candidates().list_snapshots()? {
+        if !root.join(&snapshot.file_path).is_file() {
+            continue;
+        }
+        if let Some(file) = decode_tally(&snapshot.ast_signature) {
+            tally += file;
+        }
+    }
+    Ok(tally)
+}
+
 fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation) -> Result<bool> {
     let id = rule_id(observation.category, &observation.instruction);
     // A deleted rule is the developer's answer to this exact ratio.
