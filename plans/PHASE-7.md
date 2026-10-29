@@ -79,12 +79,18 @@ the post-commit hook learns it again.
 SPEC.md §9 says a correction is a "1–15 char" edit inside the AI block. The
 extension treats any edit that is not itself a burst as a correction.
 
-- [ ] Decide with evidence: replay the extension's existing tests with a
-      15-character cap and list which real corrections it would miss
-      (renaming `Error` to `NotFoundError` is 13 characters; swapping a
-      decorator line is more than 15).
-- [ ] Make SPEC.md and the code agree on the outcome, and record the reason
-      in the extension's `deltaTracker.ts` header comment.
+- [x] Decided with evidence. Measured as single editor edits, three of
+      seven realistic corrections fit a 15-character cap (one key at a time,
+      a rename to `NotFoundError` at 13, typing `Auto`) and four do not: a
+      pasted alias import path (17), a pasted `this.logger.log(` (16), a
+      "convert to arrow function" code action (41) and an
+      interface-to-type header (20). Those four are exactly the
+      transformations the detectors learn, so a cap would mostly lose real
+      corrections, while precision already comes from the detectors.
+      **Outcome: no size limit; any non-burst edit inside the block counts.**
+- [x] SPEC.md §9 now says so and gives the numbers; the reason is in the
+      `deltaTracker.ts` header comment; a new extension test pins it with a
+      41-character code-action edit.
 
 ## Step 5: Monorepo scopes and stack detection (W7, M10)
 

@@ -20,7 +20,7 @@ packages/            VS Code extension and the @opentaste/cli npm wrapper (phase
 plans/               one file per phase, with a status you keep current
 ```
 
-Current baseline on `main`: **324 Rust tests and 39 TypeScript tests passing**
+Current baseline on `main`: **324 Rust tests and 40 TypeScript tests passing**
 (`pnpm -r run test`), `cargo clippy --workspace
 --all-targets -- -D warnings` clean, `cargo fmt --all --check` clean. Do not
 regress it.
