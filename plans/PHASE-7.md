@@ -1,0 +1,146 @@
+# Phase 7: Correctness of the learning pipeline
+
+**Status:** pending
+
+| | |
+| --- | --- |
+| **Blocked by** | Nothing. Phase 6's code is done; its open gates are release steps. |
+| **Blocks** | Phases 8 to 10, which feed more observations into the same pipeline. |
+| **Rough size** | 2–3 sessions |
+| **Rows** | [V1-AUDIT.md](V1-AUDIT.md) W3–W12 and M10 |
+
+Phases 8 to 10 add languages, detectors and history. Every one of them sends
+more observations through `record_observation`, scoring, contradiction and
+sync. Anything those layers get wrong today gets multiplied, so this phase
+fixes them first.
+
+---
+
+## Step 1: Make demotion reachable (W3)
+
+A confirmed rule leaves the editor files the moment it falls below 0.80, but
+`contradictions()` only looks at *active* rules, so it is never contradicted
+again and never reaches the 0.50 demotion SPEC.md §5.1 describes. It stays in
+`rules.json` forever.
+
+- [ ] `contradictions()` checks every **enabled confirmed** rule whose scope
+      matches the file, active or not. A disabled rule is the developer's
+      choice and is left alone.
+- [ ] A rule that keeps being contradicted therefore decays 0.82 → 0.62 →
+      0.47 and is moved to the candidate cache by the existing
+      `apply_contradiction` path.
+- [ ] Tests: two contradicting commits demote a rule into the candidates
+      (it disappears from `rules.json` and appears in `candidate_rules`);
+      a disabled rule is never decayed; an inactive rule is not written to
+      editor files at any point in between.
+
+## Step 2: Decorator contradictions (W4)
+
+An anti-pattern like `@Get()` is under the 8-character needle, so rules from
+`DecoratorSwap` never decay.
+
+- [ ] When a rule's anti-pattern is a single decorator, match decorators by
+      name on the syntax tree instead of by substring: count `decorator`
+      nodes whose name equals the anti-pattern's, before and after.
+- [ ] Tests: adding `@Entity('x')` to a file contradicts a rule whose
+      anti-pattern is `@Entity()`; a decorator only mentioned in a comment or
+      string does not; an unchanged legacy decorator does not.
+
+## Step 3: One correction, one count, across sources (W5)
+
+The extension learns a correction when the file is saved. If the AI's block
+had already been committed, the next commit carries the same correction and
+the post-commit hook learns it again.
+
+- [ ] Reproduce first, with a CLI test: `learn-delta` on a correction, then a
+      commit with the same before/after for that block, then
+      `learn --from-git-head`. Record whether the count goes up twice. If it
+      does not, write down why and close the step.
+- [ ] If it does: `learn-delta` records each observation it makes in a
+      `recent_deltas` cache table keyed by file, rule id and the scrubbed
+      preferred snippet. `learn --from-git-head` skips an observation that
+      matches an entry for the same file and removes the entry.
+- [ ] Tests: the reproduction above counts once; two *different* corrections
+      of the same kind in the same file still count twice.
+
+## Step 4: Settle the correction heuristic (W6)
+
+SPEC.md §9 says a correction is a "1–15 char" edit inside the AI block. The
+extension treats any edit that is not itself a burst as a correction.
+
+- [ ] Decide with evidence: replay the extension's existing tests with a
+      15-character cap and list which real corrections it would miss
+      (renaming `Error` to `NotFoundError` is 13 characters; swapping a
+      decorator line is more than 15).
+- [ ] Make SPEC.md and the code agree on the outcome, and record the reason
+      in the extension's `deltaTracker.ts` header comment.
+
+## Step 5: Monorepo scopes and stack detection (W7, M10)
+
+- [ ] A learned scope starts at the nearest directory under the project root
+      that has its own `package.json`, `Cargo.toml`, `pyproject.toml` or
+      `go.mod`: `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`.
+      Without one, behaviour is unchanged (`src/**/*.service.ts`).
+- [ ] `detected_stack` adds `typescript` when a `tsconfig.json` exists,
+      databases from dependencies (`pg`, `mysql2`, `mongodb`/`mongoose`,
+      `sqlite3`/`better-sqlite3`, `prisma`, `typeorm`, `drizzle-orm`), and reads
+      workspace packages (`workspaces` in `package.json`, and
+      `pnpm-workspace.yaml`), not only the root.
+- [ ] Tests: the monorepo scope with and without a package manifest; a
+      workspace whose framework is only in `apps/web/package.json`;
+      `typescript` and `postgresql` detected; the existing single-package
+      tests unchanged.
+
+## Step 6: Barrel exports (W8)
+
+- [ ] `export * from`, `export { x } from` and `export type { … }` no longer
+      count toward named exports.
+- [ ] Tests: a barrel file contributes nothing to either side; a module with
+      real named exports and a re-export counts only the real ones.
+
+## Step 7: Scrubber boundary (W9)
+
+- [ ] Vendor-prefix patterns (`AKIA`, `ghp_`, `sk_live_`, …) match after any
+      non-alphanumeric character or at the start, not only at a `\b`, for
+      prefixes that cannot begin an English word.
+- [ ] Tests: `xxxAKIA…` and `token=ghp_…` are redacted; the English words in
+      the existing negative fixtures still are not.
+
+## Step 8: Scan hygiene (W10, W11, W12)
+
+- [ ] Snapshot rows for files the walk no longer sees are deleted at the end
+      of a scan.
+- [ ] Files in a language with no analyzers are skipped before they are read.
+      The check goes through one function, so phase 8 turns languages on in
+      one place.
+- [ ] The `MAX_FILE_BYTES` doc comment matches the `>` comparison.
+- [ ] Tests: deleting a file removes its snapshot after the next scan; a Rust
+      file is not read or snapshotted while Rust has no analyzers.
+
+## Step 9: The full test set
+
+The complete list this phase cannot ship without. Each was written with its
+step.
+
+- [ ] Demotion through two contradictions; disabled rules untouched.
+- [ ] Decorator contradiction by name, and its three negatives.
+- [ ] Cross-source counting: once for the same correction, twice for two.
+- [ ] Monorepo scope, workspace stack, `typescript` and database detection.
+- [ ] Barrel files count nothing.
+- [ ] Glued vendor keys redacted.
+- [ ] Snapshot pruning; unsupported languages not read.
+
+---
+
+## Definition of done
+
+- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean.
+- [ ] `pnpm -r run typecheck` and `pnpm -r run test` green if step 4 touched
+      the extension.
+- [ ] SPEC.md §5.1 and §9 match the code.
+- [ ] **Manual gate:** run `taste init` on a real monorepo, replay its last
+      20 commits through `taste learn --from-git-head`, and confirm every
+      rule's scope names the right package and nothing was counted twice.
+- [ ] The W3–W12 and M10 rows in V1-AUDIT.md marked fixed.
+- [ ] Status at the top of this file set to `completed`.
