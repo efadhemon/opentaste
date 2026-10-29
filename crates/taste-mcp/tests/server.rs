@@ -193,6 +193,40 @@ fn recording_keeps_optional_patterns() {
 }
 
 #[test]
+fn secrets_in_recorded_snippets_never_reach_the_rule_file_or_editor_files() {
+    let session = Session::new();
+    let key = "AKIAIOSFODNN7EXAMPLE";
+    let token = "ghp_8f3Kd92LmQx7Rt4Vb1Nz6Hc0Jw5Ys2Pe9Ua3";
+    let result = session.call(
+        "record_coding_taste",
+        json!({
+            "category": "architecture",
+            "scope": "src/**/*.service.ts",
+            "instruction": "Read credentials from the config service, never inline them.",
+            "anti_pattern": format!("const s3 = new S3({{ accessKeyId: \"{key}\" }});"),
+            "preferred_pattern": format!("// was: Authorization: Bearer {token}\nconst s3 = new S3(config.aws);"),
+        }),
+    );
+    assert!(!is_error(&result), "{result}");
+
+    let rule = &session.store.rules().unwrap().rules[0];
+    let anti = rule.anti_pattern.as_deref().unwrap();
+    let preferred = rule.preferred_pattern.as_deref().unwrap();
+    assert!(anti.contains("<REDACTED_SECRET>"), "{anti}");
+    assert!(
+        preferred.contains("const s3 = new S3(config.aws);"),
+        "{preferred}"
+    );
+    for file in [
+        std::fs::read_to_string(&session.paths.rules_json).unwrap(),
+        std::fs::read_to_string(session.paths.claude_md()).unwrap(),
+    ] {
+        assert!(!file.contains(key), "{file}");
+        assert!(!file.contains(token), "{file}");
+    }
+}
+
+#[test]
 fn get_returns_only_the_rules_whose_scope_matches_the_file() {
     let session = Session::new();
     session.record(
