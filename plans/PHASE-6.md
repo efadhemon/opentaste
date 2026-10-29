@@ -230,9 +230,13 @@ is visible without a test that reproduces the event sequence.
 
 ## Definition of done
 
-- [ ] CI's Node job green: `tsc --noEmit` clean and extension tests passing.
-      Clean locally on Linux (39 TypeScript tests, end-to-end included);
-      the CI job itself first runs on the PR.
+- [x] CI's Node job green: `tsc --noEmit` clean and extension tests passing.
+      Green on Linux, macOS and Windows from `4415143`, with the end-to-end
+      test passing against a freshly built `taste` on Ubuntu. The first run
+      failed before any project code ran: `actions/setup-node@v5` caches
+      automatically when `package.json` has a `packageManager` field, and
+      that cache step needs pnpm before `corepack enable` provides it. Every
+      `setup-node` in both workflows now sets `package-manager-cache: false`.
 - [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` still clean (303 tests).
 - [ ] **Manual check:** install the packaged extension in VS Code, Cursor **and**
