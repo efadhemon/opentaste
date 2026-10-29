@@ -1,0 +1,68 @@
+{
+  "name": "opentaste",
+  "displayName": "OpenTaste",
+  "description": "Learns your coding taste from how you correct AI edits, and teaches it back to Cursor, Claude, Windsurf and Copilot.",
+  "version": "0.1.0",
+  "publisher": "opentaste",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/efadhemon/opentaste"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "cursor",
+    "windsurf",
+    "copilot",
+    "conventions"
+  ],
+  "activationEvents": [
+    "workspaceContains:.taste/rules.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "opentaste.openDashboard",
+        "title": "OpenTaste: Open Dashboard"
+      },
+      {
+        "command": "opentaste.sync",
+        "title": "OpenTaste: Sync Rules to Editors"
+      }
+    ],
+    "configuration": {
+      "title": "OpenTaste",
+      "properties": {
+        "opentaste.binaryPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `taste` binary. Empty means the workspace's node_modules/.bin, then PATH."
+        },
+        "opentaste.learnFromEdits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Learn from corrections you make to multi-line AI edits."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit",
+    "test": "tsc -p . && node --test \"out/test/**/*.test.js\"",
+    "package": "tsc -p . && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "18.19.130",
+    "@types/vscode": "1.85.0",
+    "@vscode/vsce": "4.0.0",
+    "typescript": "7.0.2"
+  }
+}

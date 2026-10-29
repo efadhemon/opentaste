@@ -1,0 +1,14 @@
+{
+  "name": "opentaste-workspace",
+  "private": true,
+  "description": "Dev tooling for the OpenTaste TypeScript packages. No runtime dependencies live here.",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  }
+}

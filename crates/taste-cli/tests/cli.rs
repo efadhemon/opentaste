@@ -610,3 +610,54 @@ fn a_reader_that_closes_early_does_not_make_taste_panic() {
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert!(output.status.success(), "{stderr}");
 }
+
+#[test]
+fn targets_json_lists_every_file_sync_writes() {
+    let dir = initialised();
+    let output = taste(dir.path(), &["targets", "--json", "--quiet"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert_eq!(text.lines().count(), 1);
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!({
+            "marker_targets": ["CLAUDE.md", ".windsurfrules", "AGENTS.md", ".github/copilot-instructions.md"],
+            "cursor_rules_dir": ".cursor/rules",
+            "cursor_rule_prefix": "opentaste-",
+            "cursor_rule_extension": "mdc"
+        })
+    );
+}
+
+#[test]
+fn disable_and_enable_toggle_a_rule_and_resync() {
+    let dir = initialised();
+    for _ in 0..6 {
+        learn_delta(
+            dir.path(),
+            "src/users/user.entity.ts",
+            ENTITY_BEFORE,
+            ENTITY_AFTER,
+        );
+    }
+    let rules: serde_json::Value =
+        serde_json::from_str(&read(dir.path(), ".taste/rules.json")).unwrap();
+    let id = rules["rules"][0]["id"].as_str().unwrap().to_string();
+    assert!(read(dir.path(), "CLAUDE.md").contains("@AutoEntity"));
+
+    assert!(taste(dir.path(), &["disable", &id]).status.success());
+    let rules: serde_json::Value =
+        serde_json::from_str(&read(dir.path(), ".taste/rules.json")).unwrap();
+    assert_eq!(rules["rules"][0]["enabled"], false);
+    assert!(!std::fs::read_to_string(dir.path().join("CLAUDE.md"))
+        .unwrap_or_default()
+        .contains("@AutoEntity"));
+
+    assert!(taste(dir.path(), &["enable", &id]).status.success());
+    assert!(read(dir.path(), "CLAUDE.md").contains("@AutoEntity"));
+
+    let missing = taste(dir.path(), &["disable", "arch-nope-000000"]);
+    assert!(!missing.status.success());
+    assert!(stderr(&missing).contains("arch-nope-000000"));
+}

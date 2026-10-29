@@ -64,6 +64,22 @@ enum Command {
     Ui,
     /// Rescan and resync whenever source files or `.taste/rules.json` change.
     Watch,
+    /// List the files `taste sync` writes, which watchers must ignore.
+    Targets {
+        /// Print one line of JSON, for the editor extension.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop applying a confirmed rule without deleting it, then sync.
+    Disable {
+        /// The rule's id, as `taste status` shows it.
+        rule_id: String,
+    },
+    /// Apply a disabled rule again, then sync.
+    Enable {
+        /// The rule's id, as `taste status` shows it.
+        rule_id: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -94,6 +110,9 @@ fn run(command: Command, out: &Output) -> anyhow::Result<()> {
         Command::Mcp => commands::mcp::run(&store),
         Command::Ui => tui::run(&store),
         Command::Watch => commands::watch::run(&store, out),
+        Command::Targets { json } => commands::targets::run(&store, json, out),
+        Command::Disable { rule_id } => commands::toggle::run(&store, &rule_id, false, out),
+        Command::Enable { rule_id } => commands::toggle::run(&store, &rule_id, true, out),
     }
 }
 

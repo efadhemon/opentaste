@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+
+# No dependency runs an install script. vsce-sign's postinstall is only for
+# signing extensions, which `vsce package` does not need.
+allowBuilds:
+  '@vscode/vsce-sign': false
