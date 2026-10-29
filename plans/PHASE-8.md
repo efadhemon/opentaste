@@ -85,17 +85,47 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 ## Step 2: Python
 
-- [ ] Analyzers for the five Python dimensions in the table, as
-      `ast/analyzers/python.rs`.
-- [ ] Detectors: relative ↔ absolute import rewrite; `Exception` → project
+- [x] Analyzers for the five Python dimensions in the table, as
+      `ast/analyzers/python.rs`. (Six, with decorators.) "The project's own
+      package" is read from the file's path: an absolute import is first-party
+      when its top module is a directory the file lives in. Third-party and
+      standard-library imports count toward neither side. Only imports are
+      symmetric; the other five promote their left side only.
+      Not counted, by design: `ValueError` and other built-ins, names of
+      unknown origin, language decorators (`@property`, standard-library ones
+      such as `@dataclass`), half-annotated signatures, `elif` without `else`,
+      `for`/`try … else`, `rich.print`, and every `print()` in a command-line
+      file (`__main__.py`, `cli.py`, `manage.py`, `cli/`, `commands/`,
+      `management/`, or a file importing argparse, click, typer, fire, docopt
+      or optparse).
+- [x] Detectors: relative ↔ absolute import rewrite; `Exception` → project
       exception; `print` → logger; nested `if`/`else` → guard clause.
-- [ ] Fixtures under `tests/fixtures/python/`, a positive and a negative per
+      (`diff/python.rs`.)
+- [x] Fixtures under `tests/fixtures/python/`, a positive and a negative per
       detector, in the style of the existing TypeScript fixtures.
-- [ ] Turn Python on in `SupportedLanguage::has_analyzers`.
+- [x] Turn Python on in `SupportedLanguage::has_analyzers` (and `taste
+      watch`, which was still checking `is_script`).
 - [ ] **Precision gate:** scan three real open-source Python projects of
       different kinds (a web service, a library, a CLI). Every rule emitted is
       listed in this file with a yes/no from a human; any "no" is a bug to fix
       before the step is ticked.
+      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 with `taste init`
+      on shallow clones; the agent's verdict and evidence for each rule:
+
+      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | --- | --- | --- | --- | --- |
+      | fastapi/full-stack-fastapi-template (web service) | Python: absolute imports of the own package | 45 · 0, 19 files | yes | `backend/app` imports only `from app.…` |
+      | ″ | TS: named exports | 275 · 23, 98 files | yes | existing TS analyzer, frontend |
+      | ″ | TS: path aliases | 203 · 2, 60 files | yes | existing TS analyzer, frontend |
+      | encode/httpx (library) | Python: relative imports | 1 · 87, 21 files | yes | `from ._models import …` throughout |
+      | ″ | Python: annotate signatures | 445 · 0, 21 files | yes | fully typed, ships `py.typed` |
+      | pypa/pipx (CLI) | Python: own exception classes | 204 · 0, 28 files | yes | 193 × `raise PipxError`, its subclasses; no bare `Exception` |
+      | ″ | Python: absolute imports of the own package | 413 · 0, 46 files | yes | `from pipx.… import` throughout |
+      | ″ | Python: annotate signatures | 742 · 3, 59 files | yes | typed codebase |
+
+      Not promoted, correctly: the template's annotations (51 · 13, 79.7%),
+      pipx's logging (66 · 17, 79.5%: a CLI that prints its output), and every
+      dimension under the 10-file floor.
 
 ## Step 3: Rust
 
@@ -124,13 +154,14 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 ## Step 5: The full test set
 
 - [ ] Every analyzer: a unanimous file, a mixed file, and a file that must
-      count nothing.
+      count nothing. (Python done.)
 - [ ] Every detector: one positive and one negative fixture.
 - [ ] Test code, scripts and `main` excluded where the step says so.
 - [ ] A mixed-language repository (TS + Python + Go) produces separate rules
-      per language and none that crosses languages.
+      per language and none that crosses languages. (TS + Python done:
+      `a_mixed_repository_keeps_each_languages_rules_apart`.)
 - [ ] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
-      from a `.py`, `.rs` and `.go` correction.
+      from a `.py`, `.rs` and `.go` correction. (`.py` done.)
 
 ---
 

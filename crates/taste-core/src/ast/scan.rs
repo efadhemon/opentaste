@@ -133,7 +133,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
 
     let fresh: Vec<Tally> = pending
         .par_iter()
-        .map(|file| analyze_source(file.lang, &file.source))
+        .map(|file| analyze_source(file.lang, Path::new(&file.relative), &file.source))
         .collect();
     let mut tallies = cached.into_iter().fold(Tally::default(), |mut acc, item| {
         acc += item;

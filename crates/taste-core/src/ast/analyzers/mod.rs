@@ -6,11 +6,13 @@
 mod arch;
 mod functions;
 mod imports;
+pub(crate) mod python;
 mod types;
 
 pub(crate) use arch::{decorator_name, is_custom_error, is_framework_decorator};
 
 use std::ops::AddAssign;
+use std::path::Path;
 
 use tree_sitter::Tree;
 
@@ -334,17 +336,20 @@ fn decode_count(raw: &str) -> Option<Count> {
 ///
 /// An unparseable buffer contributes nothing. Returning an empty tally, rather
 /// than failing the scan, keeps one broken file from discarding the rest.
-pub fn analyze_source(lang: SupportedLanguage, source: &str) -> Tally {
+///
+/// `path` is the file's path relative to the project root. Python reads its
+/// own package's name from it.
+pub fn analyze_source(lang: SupportedLanguage, path: &Path, source: &str) -> Tally {
     if !lang.has_analyzers() {
         return Tally::default();
     }
     let Some(tree) = super::parse(lang, source) else {
         return Tally::default();
     };
-    tally_tree(lang, &tree, source)
+    tally_tree(lang, path, &tree, source)
 }
 
-pub(crate) fn tally_tree(lang: SupportedLanguage, tree: &Tree, source: &str) -> Tally {
+pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, source: &str) -> Tally {
     let mut tally = Tally::default();
     match lang.family() {
         Family::Script => {
@@ -358,8 +363,9 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, tree: &Tree, source: &str) -> 
                 errors: arch::errors(lang, tree, source),
             }
         }
-        // Their analyzers land in phase 8 steps 2 to 4.
-        Family::Python | Family::Rust | Family::Go => {}
+        Family::Python => tally.python = python::tally(path, tree, source),
+        // Their analyzers land in phase 8 steps 3 and 4.
+        Family::Rust | Family::Go => {}
     }
     tally
 }
@@ -381,7 +387,7 @@ mod tests {
     use super::*;
 
     fn tally(lang: SupportedLanguage, source: &str) -> ScriptTally {
-        analyze_source(lang, source).script
+        analyze_source(lang, Path::new("src/app.ts"), source).script
     }
 
     #[test]
@@ -613,7 +619,11 @@ export default loadUser;
 
     #[test]
     fn a_rust_file_contributes_no_script_counts() {
-        let got = analyze_source(SupportedLanguage::Rust, "fn main() {}\n");
+        let got = analyze_source(
+            SupportedLanguage::Rust,
+            Path::new("src/main.rs"),
+            "fn main() {}\n",
+        );
         assert_eq!(got.script, ScriptTally::default());
     }
 

@@ -12,7 +12,7 @@
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
-use super::{Family, ScriptTally, Tally};
+use super::{Family, PythonTally, ScriptTally, Tally};
 
 /// Minimum share of occurrences the winning side must hold.
 pub const MIN_RATIO: f32 = 0.80;
@@ -39,20 +39,87 @@ pub const PREFER_CUSTOM_DECORATORS: &str =
     "Prefer project-specific decorators over framework decorators such as `@Entity` and `@Injectable`.";
 pub const PREFER_CUSTOM_ERRORS: &str = "Prefer custom error classes over throwing bare `Error`.";
 
+pub const PY_PREFER_ABSOLUTE_IMPORTS: &str =
+    "In Python, prefer absolute imports of the project's own package (`from app.users import User`) over relative imports (`from .users import User`).";
+pub const PY_PREFER_RELATIVE_IMPORTS: &str =
+    "In Python, prefer relative imports within the package (`from .users import User`) over absolute imports of it (`from app.users import User`).";
+pub const PY_PREFER_CUSTOM_EXCEPTIONS: &str =
+    "In Python, raise the project's own exception classes instead of bare `Exception`.";
+pub const PY_PREFER_LOGGING: &str =
+    "In Python library code, log through the `logging` module (a module-level `logger`) instead of `print()`.";
+pub const PY_PREFER_GUARD_CLAUSES: &str =
+    "In Python, prefer early `return` or `raise` guard clauses over nested if/else blocks.";
+pub const PY_PREFER_ANNOTATIONS: &str =
+    "In Python, annotate every function's parameters and return type.";
+pub const PY_PREFER_CUSTOM_DECORATORS: &str =
+    "In Python, prefer the project's own decorators over framework decorators.";
+
 const SCRIPT_SCOPE: &str = Family::Script.scope();
+const PYTHON_SCOPE: &str = Family::Python.scope();
 const TYPESCRIPT_SCOPE: &str = "**/*.{ts,tsx}";
 
 /// Observations the tally is strong enough to support, in a stable order.
 pub fn observations(tally: &Tally) -> Vec<Observation> {
     let mut found = Vec::new();
-    let tally = &tally.script;
-    push(&mut found, import_paths(tally));
-    push(&mut found, exports(tally));
-    push(&mut found, type_constructs(tally));
-    push(&mut found, function_syntax(tally));
-    push(&mut found, control_flow(tally));
-    push(&mut found, decorators(tally));
-    push(&mut found, errors(tally));
+    let script = &tally.script;
+    push(&mut found, import_paths(script));
+    push(&mut found, exports(script));
+    push(&mut found, type_constructs(script));
+    push(&mut found, function_syntax(script));
+    push(&mut found, control_flow(script));
+    push(&mut found, decorators(script));
+    push(&mut found, errors(script));
+    for observation in python(&tally.python) {
+        push(&mut found, Some(observation));
+    }
+    found
+}
+
+/// Python's dimensions. Only imports are symmetric: a codebase that mostly
+/// prints, raises `Exception`, nests `else` or leaves signatures bare is not
+/// expressing a taste.
+fn python(tally: &PythonTally) -> Vec<Observation> {
+    let mut found = Vec::new();
+    if let Some((left_wins, ratio)) = choose(tally.imports, true) {
+        let instruction = if left_wins {
+            PY_PREFER_ABSOLUTE_IMPORTS
+        } else {
+            PY_PREFER_RELATIVE_IMPORTS
+        };
+        found.push(observed(
+            RuleCategory::Imports,
+            PYTHON_SCOPE,
+            instruction,
+            ratio,
+        ));
+    }
+    for (count, category, instruction) in [
+        (
+            tally.errors,
+            RuleCategory::ErrorHandling,
+            PY_PREFER_CUSTOM_EXCEPTIONS,
+        ),
+        (tally.logging, RuleCategory::CodeStyle, PY_PREFER_LOGGING),
+        (
+            tally.control_flow,
+            RuleCategory::CodeStyle,
+            PY_PREFER_GUARD_CLAUSES,
+        ),
+        (
+            tally.annotations,
+            RuleCategory::Types,
+            PY_PREFER_ANNOTATIONS,
+        ),
+        (
+            tally.decorators,
+            RuleCategory::Architecture,
+            PY_PREFER_CUSTOM_DECORATORS,
+        ),
+    ] {
+        if let Some((_, ratio)) = choose(count, false) {
+            found.push(observed(category, PYTHON_SCOPE, instruction, ratio));
+        }
+    }
     found
 }
 
@@ -199,6 +266,8 @@ pub fn opposite_instruction(instruction: &str) -> Option<&'static str> {
         PREFER_TYPE_ALIAS => PREFER_INTERFACE,
         PREFER_FUNCTION_DECLARATIONS => PREFER_ARROW_FUNCTIONS,
         PREFER_ARROW_FUNCTIONS => PREFER_FUNCTION_DECLARATIONS,
+        PY_PREFER_ABSOLUTE_IMPORTS => PY_PREFER_RELATIVE_IMPORTS,
+        PY_PREFER_RELATIVE_IMPORTS => PY_PREFER_ABSOLUTE_IMPORTS,
         _ => return None,
     })
 }
@@ -305,5 +374,42 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), Family::ALL.len(), "{ids:?}");
+    }
+
+    #[test]
+    fn python_counts_promote_python_rules_scoped_to_python_files() {
+        let tally = Tally {
+            python: PythonTally {
+                imports: files(2, 18, 12),
+                logging: files(1, 9, 10),
+                annotations: files(45, 5, 10),
+                ..PythonTally::default()
+            },
+            ..Tally::default()
+        };
+        let promoted = observations(&tally);
+        let instructions: Vec<_> = promoted.iter().map(|o| o.instruction.as_str()).collect();
+        assert_eq!(
+            instructions,
+            vec![PY_PREFER_RELATIVE_IMPORTS, PY_PREFER_ANNOTATIONS]
+        );
+        assert!(promoted.iter().all(|o| o.scope == "**/*.py"));
+        assert_eq!(
+            opposite_instruction(PY_PREFER_RELATIVE_IMPORTS),
+            Some(PY_PREFER_ABSOLUTE_IMPORTS)
+        );
+    }
+
+    #[test]
+    fn a_print_majority_is_not_a_rule() {
+        let tally = Tally {
+            python: PythonTally {
+                logging: files(1, 30, 12),
+                errors: files(0, 20, 12),
+                ..PythonTally::default()
+            },
+            ..Tally::default()
+        };
+        assert!(observations(&tally).is_empty());
     }
 }

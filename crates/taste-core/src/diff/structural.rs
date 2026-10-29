@@ -17,7 +17,7 @@ use tree_sitter::{Node, Tree};
 
 use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
-    node_text, parse, unquote, ScriptQuery, SupportedLanguage,
+    node_text, parse, unquote, Family, ScriptQuery, SupportedLanguage,
 };
 use crate::config::Paths;
 use crate::models::{RuleCategory, RuleSource};
@@ -62,9 +62,12 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
     let Some(lang) = SupportedLanguage::from_path(path) else {
         return Ok(Vec::new());
     };
-    if !lang.is_script() {
-        return Ok(Vec::new());
-    }
+    let detectors = match lang.family() {
+        _ if !lang.has_analyzers() => return Ok(Vec::new()),
+        Family::Script => DETECTORS,
+        Family::Python => super::python::DETECTORS,
+        Family::Rust | Family::Go => return Ok(Vec::new()),
+    };
     let (Some(before_tree), Some(after_tree)) = (parse(lang, before), parse(lang, after)) else {
         return Ok(Vec::new());
     };
@@ -74,7 +77,7 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
-    for detector in DETECTORS {
+    for detector in detectors {
         let Some(observation) = detector.detect(&before_tree, before, &after_tree, after, path)
         else {
             continue;
@@ -87,7 +90,7 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
     Ok(found)
 }
 
-trait Detector: Sync {
+pub(super) trait Detector: Sync {
     fn detect(
         &self,
         before_tree: &Tree,
@@ -378,7 +381,7 @@ impl Detector for ControlFlow {
     }
 }
 
-fn observation(
+pub(super) fn observation(
     category: RuleCategory,
     path: &Path,
     instruction: impl Into<String>,

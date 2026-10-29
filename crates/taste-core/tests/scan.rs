@@ -4,7 +4,7 @@ mod common;
 
 use common::Project;
 use taste_core::ast::stored_tally;
-use taste_core::ast::PREFER_PATH_ALIASES;
+use taste_core::ast::{PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING};
 use taste_core::scan;
 
 fn write_imports(project: &Project, alias: usize, relative: usize) {
@@ -296,7 +296,7 @@ fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
     project.write("src/main.rs", "fn main() {}\n");
-    project.write("tools/gen.py", "print('hi')\n");
+    project.write("cmd/gen.go", "package main\nfunc main() {}\n");
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1);
@@ -310,7 +310,82 @@ fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
     assert!(project
         .store
         .candidates()
-        .get_snapshot("tools/gen.py")
+        .get_snapshot("cmd/gen.go")
         .unwrap()
         .is_none());
+}
+
+/// Ten annotated, logging library modules under `src/myapp/`.
+fn write_python_library(project: &Project) {
+    for index in 0..10 {
+        project.write(
+            &format!("src/myapp/module{index}.py"),
+            "import logging\n\nlogger = logging.getLogger(__name__)\n\n\n\
+             def run(job: str) -> None:\n    logger.info(job)\n",
+        );
+    }
+}
+
+#[test]
+fn a_python_codebase_promotes_python_rules_scoped_to_python_files() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    let mut instructions: Vec<_> = rules.iter().map(|rule| rule.instruction.as_str()).collect();
+    instructions.sort();
+    let mut expected = vec![PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING];
+    expected.sort();
+    assert_eq!(instructions, expected, "{rules:?}");
+    assert!(rules.iter().all(|rule| rule.scope == "**/*.py"));
+}
+
+#[test]
+fn python_tests_and_scripts_do_not_count() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    // Enough print-heavy tests and scripts to sink the logging ratio if read.
+    for index in 0..10 {
+        let printing = "def check() -> None:\n    print('a')\n    print('b')\n    print('c')\n";
+        project.write(&format!("tests/test_module{index}.py"), printing);
+        project.write(&format!("scripts/task{index}.py"), printing);
+    }
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "tests and scripts are not read");
+    assert_eq!(report.tallies.python.logging.right, 0);
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .any(|rule| rule.instruction == PY_PREFER_LOGGING));
+}
+
+#[test]
+fn a_mixed_repository_keeps_each_languages_rules_apart() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    write_imports(&project, 10, 0);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    for rule in &rules {
+        let python = rule.instruction.starts_with("In Python");
+        assert_eq!(rule.scope == "**/*.py", python, "{rule:?}");
+    }
+    assert!(rules
+        .iter()
+        .any(|rule| rule.instruction == PREFER_PATH_ALIASES));
+    assert!(rules
+        .iter()
+        .any(|rule| rule.instruction == PY_PREFER_LOGGING));
+    // Nothing the TypeScript files counted leaked into the Python tally.
+    assert_eq!(report.tallies.python.imports.files, 0);
+    assert_eq!(report.tallies.script.import_paths.files, 10);
 }

@@ -128,7 +128,7 @@ impl SupportedLanguage {
     /// and the post-commit hook skip other files before reading them. This is
     /// the one switch to flip when a language gains analyzers and detectors.
     pub fn has_analyzers(self) -> bool {
-        self.is_script()
+        matches!(self.family(), Family::Script | Family::Python)
     }
 
     /// Grammar for this language.

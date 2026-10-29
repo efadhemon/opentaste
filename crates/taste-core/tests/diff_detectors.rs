@@ -10,7 +10,9 @@ use std::path::Path;
 use taste_core::analyze;
 use taste_core::models::RuleSource;
 
-fn pair(detector: &str, negative: bool) -> (String, String) {
+/// `before.<ext>` and `after.<ext>` under `tests/fixtures/<detector>`, or its
+/// `negative/` directory.
+fn pair_of(detector: &str, ext: &str, negative: bool) -> (String, String) {
     let mut dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(detector);
@@ -18,13 +20,14 @@ fn pair(detector: &str, negative: bool) -> (String, String) {
         dir.push("negative");
     }
     (
-        fs::read_to_string(dir.join("before.ts")).unwrap(),
-        fs::read_to_string(dir.join("after.ts")).unwrap(),
+        fs::read_to_string(dir.join(format!("before.{ext}"))).unwrap(),
+        fs::read_to_string(dir.join(format!("after.{ext}"))).unwrap(),
     )
 }
 
 fn fires(detector: &str, path: &str, needle: &str) {
-    let (before, after) = pair(detector, false);
+    let ext = Path::new(path).extension().unwrap().to_str().unwrap();
+    let (before, after) = pair_of(detector, ext, false);
     let found = analyze(&before, &after, Path::new(path)).unwrap();
     assert_eq!(found.len(), 1, "{detector} positive: {found:?}");
     assert_eq!(found[0].source, RuleSource::AstDiff);
@@ -37,7 +40,7 @@ fn fires(detector: &str, path: &str, needle: &str) {
     assert!(found[0].preferred_pattern.is_some());
     assert_ne!(found[0].scope, "**/*");
 
-    let (before, after) = pair(detector, true);
+    let (before, after) = pair_of(detector, ext, true);
     let found = analyze(&before, &after, Path::new(path)).unwrap();
     assert!(
         found.is_empty(),
@@ -253,4 +256,55 @@ fn any_package_manifest_marks_a_package() {
         scopes_in(dir.path(), "services/billing/web/user.service.ts"),
         vec!["services/billing/**/*.service.ts".to_string()]
     );
+}
+
+#[test]
+fn python_relative_import_becoming_first_party_absolute_is_detected() {
+    fires(
+        "python/import-rewrite",
+        "src/myapp/users/views.py",
+        "absolute imports",
+    );
+}
+
+#[test]
+fn python_bare_exception_becoming_a_project_exception_is_detected() {
+    fires(
+        "python/exception-class",
+        "src/myapp/users/service.py",
+        "exception classes",
+    );
+}
+
+#[test]
+fn python_print_becoming_a_logger_call_is_detected() {
+    fires("python/print-to-logger", "src/myapp/sync.py", "`logging`");
+}
+
+#[test]
+fn python_else_becoming_a_guard_clause_is_detected() {
+    fires(
+        "python/guard-clause",
+        "src/myapp/orders.py",
+        "guard clauses",
+    );
+}
+
+#[test]
+fn a_python_import_moved_outside_the_files_own_package_is_not_a_taste() {
+    // `other` is not a directory this file lives in, so it is a package.
+    let found = analyze(
+        "from .models import User\n",
+        "from other.models import User\n",
+        Path::new("src/myapp/users/views.py"),
+    )
+    .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_python_scope_is_derived_like_any_other() {
+    let (before, after) = pair_of("python/guard-clause", "py", false);
+    let found = analyze(&before, &after, Path::new("app/tests/test_orders.py")).unwrap();
+    assert_eq!(found[0].scope, "app/**/test_*.py");
 }

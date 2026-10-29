@@ -89,7 +89,7 @@ pub fn relevance(paths: &Paths, relative: &Path, new_dir: bool) -> Relevance {
         };
     }
     match SupportedLanguage::from_path(relative) {
-        Some(lang) if lang.is_script() => Relevance::Source,
+        Some(lang) if lang.has_analyzers() => Relevance::Source,
         _ => Relevance::Ignore,
     }
 }
@@ -248,10 +248,11 @@ mod tests {
         assert_eq!(rel("packages/ui/dist/index.js"), Relevance::Ignore);
         assert_eq!(rel(".git/index"), Relevance::Ignore);
         assert_eq!(rel("README.md"), Relevance::Ignore);
+        assert_eq!(rel("app/users.py"), Relevance::Source);
         assert_eq!(
             rel("src/lib.rs"),
             Relevance::Ignore,
-            "only script files are scanned"
+            "only languages with analyzers are scanned"
         );
     }
 

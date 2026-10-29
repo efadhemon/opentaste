@@ -405,6 +405,34 @@ fn learn_from_git_head_records_what_the_last_commit_changed() {
     assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
 }
 
+const PRINT_BEFORE: &str = "import logging\n\nlogger = logging.getLogger(__name__)\n\n\ndef sync(batch):\n    print(\"synced\", batch)\n";
+const PRINT_AFTER: &str = "import logging\n\nlogger = logging.getLogger(__name__)\n\n\ndef sync(batch):\n    logger.info(\"synced\", batch)\n";
+
+#[test]
+fn learn_from_git_head_learns_from_a_python_correction() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "app/sync.py", PRINT_BEFORE);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    commit(root, "app/sync.py", PRINT_AFTER);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
+}
+
+#[test]
+fn learn_delta_learns_from_a_python_correction() {
+    let dir = initialised();
+    let value = learn_delta(dir.path(), "app/sync.py", PRINT_BEFORE, PRINT_AFTER);
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1, "{value}");
+    assert!(candidates[0]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("`logging`"));
+}
+
 #[test]
 fn learn_from_git_head_decays_a_rule_whose_anti_pattern_the_commit_added() {
     let dir = git_repo();
