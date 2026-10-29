@@ -222,6 +222,30 @@ impl RuleStore {
         Ok(matched)
     }
 
+    /// Enabled confirmed rules whose scope glob matches `file_path`, including
+    /// those that have fallen below the promotion confidence.
+    ///
+    /// Contradiction checks use this rather than [`Self::rules_for_file`]: a
+    /// rule that drops below 0.80 leaves the editor files but stays in the
+    /// rule file, and only further contradictions can take it on down to the
+    /// demotion threshold. A disabled rule is the developer's call and is not
+    /// returned.
+    pub fn enabled_rules_for_file(
+        &self,
+        file_path: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<TasteRule>> {
+        let relative = self.paths.relativize(file_path.as_ref());
+        let normalized = normalize_path(relative);
+
+        let mut matched = Vec::new();
+        for rule in self.rules()?.rules.into_iter().filter(|rule| rule.enabled) {
+            if scope_matcher(&rule.scope)?.is_match(&normalized) {
+                matched.push(rule);
+            }
+        }
+        Ok(matched)
+    }
+
     /// Record one sighting of a coding preference.
     ///
     /// This is the single entry point for the AST scanner, the structural diff

@@ -1,6 +1,6 @@
 # Phase 7: Correctness of the learning pipeline
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -23,16 +23,18 @@ A confirmed rule leaves the editor files the moment it falls below 0.80, but
 again and never reaches the 0.50 demotion SPEC.md §5.1 describes. It stays in
 `rules.json` forever.
 
-- [ ] `contradictions()` checks every **enabled confirmed** rule whose scope
-      matches the file, active or not. A disabled rule is the developer's
+- [x] `contradictions()` checks every **enabled confirmed** rule whose scope
+      matches the file, active or not, through the new
+      `RuleStore::enabled_rules_for_file`. A disabled rule is the developer's
       choice and is left alone.
-- [ ] A rule that keeps being contradicted therefore decays 0.82 → 0.62 →
-      0.47 and is moved to the candidate cache by the existing
-      `apply_contradiction` path.
-- [ ] Tests: two contradicting commits demote a rule into the candidates
-      (it disappears from `rules.json` and appears in `candidate_rules`);
-      a disabled rule is never decayed; an inactive rule is not written to
-      editor files at any point in between.
+- [x] A rule that keeps being contradicted therefore decays 0.82 → 0.62 →
+      0.47 (or 0.95 → 0.71 → 0.53 → 0.40 from chat) and is moved to the
+      candidate cache by the existing `apply_contradiction` path.
+- [x] Tests in `tests/promotion_flow.rs` drive the real detection, not
+      `apply_contradiction` directly (the old tests did, which is why the
+      unreachable path went unnoticed): three contradicting edits take a
+      chat rule out of the editor files, then down, then into the candidates;
+      a disabled rule is never decayed. The first fails without the fix.
 
 ## Step 2: Decorator contradictions (W4)
 

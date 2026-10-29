@@ -1,4 +1,4 @@
-//! Find active rules whose rejected snippet the developer just wrote.
+//! Find confirmed rules whose rejected snippet the developer just wrote.
 //!
 //! A false contradiction decays a correct rule, which is harder to notice than
 //! a missing one. Two things keep the match honest:
@@ -23,8 +23,9 @@ const MIN_NEEDLE: usize = 8;
 const FALLBACK_NEEDLE: usize = 24;
 const SLACK: usize = 48;
 
-/// Identifiers of active rules whose `anti_pattern` the edit from `before`
-/// to `after` introduced.
+/// Identifiers of enabled confirmed rules whose `anti_pattern` the edit from
+/// `before` to `after` introduced. Rules below the promotion confidence are
+/// included, so a rule that keeps being contradicted reaches demotion.
 pub fn contradictions(
     store: &RuleStore,
     path: &Path,
@@ -32,7 +33,7 @@ pub fn contradictions(
     after: &str,
 ) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    for rule in store.rules_for_file(path)? {
+    for rule in store.enabled_rules_for_file(path)? {
         let Some(anti) = rule.anti_pattern.as_deref() else {
             continue;
         };
