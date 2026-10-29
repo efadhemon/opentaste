@@ -64,6 +64,47 @@ Tick the `- [ ]` task boxes as you land each piece. If you discover the plan is
 wrong, edit the plan in the same change that proves it wrong — a stale plan is
 worse than no plan, because the next agent will trust it.
 
+## Build and test one step at a time
+
+**Every step of a phase ships with its own tests, and the three commands below
+pass before you start the next step.** Do not build a whole phase and then test
+it.
+
+```bash
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+This is not ceremony, and it is not about test count. It is the only way this
+particular project stays correct, for three reasons specific to what OpenTaste
+does:
+
+1. **The layers feed each other.** A miscounted tally in an analyzer becomes a
+   wrong ratio, which becomes a wrongly promoted rule, which becomes a bad
+   instruction in `CLAUDE.md`. By the time you see the bad instruction you are
+   four layers from the cause. Caught at its own step, it is a one-line fix.
+2. **A wrong rule is worse than a missing rule**, and wrong rules are the
+   failure mode untested detectors produce. They do not crash; they quietly
+   degrade every AI edit in the project.
+3. **The suite is the specification.** The 148 existing tests are how phases 1
+   and 2 stay trustworthy while phases 3 to 6 are built on top of them. Each
+   step you add should leave that property intact.
+
+So: write the test with the code, not after it. A step that cannot be tested
+yet is a sign the step is too large or the seam is in the wrong place — the
+`serve(reader, writer, store)` signature in [plans/PHASE-4.md](plans/PHASE-4.md)
+and the terminal-free `App` state machine in [plans/PHASE-5.md](plans/PHASE-5.md)
+are both there precisely so their steps are testable as they land.
+
+The `Tests` step near the end of each plan file is **the complete list the phase
+cannot ship without**, there so you can confirm nothing was skipped. It is not a
+batch of work to leave until last.
+
+Two things cannot be caught this way, which is why each plan file also carries a
+manual gate: whether an inferred rule is one a human actually agrees with, and
+whether the tool behaves in a real editor. Do not skip those either.
+
 ## Phase dependencies
 
 ```mermaid
@@ -127,6 +168,12 @@ These apply to every phase and are the gate for calling one done.
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   warnings` and `cargo test --workspace` all clean. No exceptions, no `#[allow]`
   added to silence a real finding.
+- **Never start a phase on top of a red one.** A phase is finished when every
+  item in its *Definition of done* passes, including the manual gate, and not
+  before. SPEC.md section 10 asks for the same thing. Later phases build
+  directly on earlier ones — phase 5 wraps phases 3 and 4, phase 6 wraps phase 5
+  — so a defect carried across a phase boundary gets harder to locate with every
+  layer added on top of it.
 - **A wrong rule is worse than a missing rule.** A bad rule actively degrades
   every AI edit in the project, while a missing one costs nothing. When a
   detector is ambiguous, do not emit.

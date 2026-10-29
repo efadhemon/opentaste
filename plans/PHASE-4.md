@@ -138,7 +138,13 @@ Two details worth getting right:
 
 ---
 
-## Step 4: Tests
+## Step 4: The full test set
+
+**Every step above lands with its own tests and a clean
+`cargo test --workspace`; see [AGENTS.md](../AGENTS.md).** This is the complete
+list the phase cannot ship without, so you can confirm nothing was skipped — not
+a batch of work to leave until last. The generic `serve` signature in step 2
+exists so this is possible from the first handler onward.
 
 Drive `serve()` with a scripted sequence of JSON lines over a `Cursor<Vec<u8>>`
 and assert on the responses.

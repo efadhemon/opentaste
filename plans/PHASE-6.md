@@ -142,7 +142,14 @@ corporate proxies, and is exactly the kind of network call a tool advertising
 
 ---
 
-## Step 5: Tests
+## Step 5: The full test set
+
+**Every step above lands with its own tests and a clean run of the Node job;
+see [AGENTS.md](../AGENTS.md).** This is the complete list the phase cannot ship
+without, so you can confirm nothing was skipped — not a batch of work to leave
+until last. `deltaTracker` is the one to be strictest about: each of its three
+hazards produces a confidently wrong rule rather than an error, and none of them
+is visible without a test that reproduces the event sequence.
 
 - [ ] Unit-test `deltaTracker` against synthesised change events: a genuine
       4-line burst opens a window; an undo-flagged event does not; an edit above

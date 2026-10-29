@@ -336,7 +336,14 @@ here; the git-hook wiring that drives it belongs to
       confident match: a false contradiction silently deletes a correct rule,
       which is harder to notice than a missing one.
 
-### Step 7: Tests
+### Step 7: The full test set
+
+**Every step above lands with its own tests and a clean
+`cargo test --workspace`; see [AGENTS.md](../AGENTS.md).** This is the complete
+list the phase cannot ship without, so you can confirm nothing was skipped — not
+a batch of work to leave until last. In this phase in particular, an untested
+analyzer does not fail loudly: it produces a plausible-looking rule that is
+wrong, and you will not notice four layers later.
 
 - [ ] Fixture-driven detector tests in
       `crates/taste-core/tests/fixtures/<detector>/{before,after}.ts`. Each

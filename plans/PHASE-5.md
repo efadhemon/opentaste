@@ -207,7 +207,14 @@ profile sets `panic = "abort"`; the hook still runs, so this remains worth doing
 
 ---
 
-## Step 5: Tests
+## Step 5: The full test set
+
+**Every step above lands with its own tests and a clean
+`cargo test --workspace`; see [AGENTS.md](../AGENTS.md).** This is the complete
+list the phase cannot ship without, so you can confirm nothing was skipped — not
+a batch of work to leave until last. `init` is the command to be strictest
+about: each of its five actions touches something the developer owns, and a
+regression there destroys their files rather than merely misbehaving.
 
 - [ ] Unit-test the `App` state machine directly: navigation at the list
       boundaries, filtering, toggle, promote, delete-with-confirmation.
