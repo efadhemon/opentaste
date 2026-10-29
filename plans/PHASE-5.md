@@ -76,6 +76,10 @@ clobber, and refuse rather than guess.
       Append a marked section exactly as `marker.rs` does for `CLAUDE.md`, or
       stop and tell the user the line to add. Set the executable bit on Unix;
       skip that silently on Windows.
+- [ ] Handle a project root with no `.git` directory. `Paths::discover` falls
+      back to a `.taste` directory, so `init` can legitimately run outside a git
+      repository: skip the hook with a one-line note and carry on rather than
+      failing the whole command.
 - [ ] Run `scan` then `sync`, and report what both did.
 - [ ] Make the whole command re-runnable. `taste init` on an already-initialised
       project must be a no-op that says so, not an error and not a reset.
@@ -99,11 +103,14 @@ clobber, and refuse rather than guess.
       inferred.
 - [ ] `mcp` — `taste_mcp::serve(stdin().lock(), stdout().lock(), &store)`.
       Nothing else, and no logging to stdout.
-- [ ] `watch` — `notify` with a debounce. The transpiler already skips writes
-      whose content is unchanged, which is most of what keeps the watcher from
-      reacting to its own output, but **still filter OpenTaste's own target
-      paths explicitly** rather than relying on that alone. Read the target list
-      from `config::Paths` so it cannot drift.
+- [ ] `watch` — `notify` with a debounce. Note that `notify` 8 ships **no
+      debouncer**; it lives in the separate `notify-debouncer-full` crate. Hand-
+      roll a simple time-window debounce rather than adding another dependency
+      for one timer. The transpiler already skips writes whose content is
+      unchanged, which is most of what keeps the watcher from reacting to its own
+      output, but **still filter OpenTaste's own target paths explicitly** rather
+      than relying on that alone. Read the target list from `config::Paths` so it
+      cannot drift.
 - [ ] `learn --from-git-head` — the command the `post-commit` hook installed in
       step 2 actually invokes. SPEC.md section 8 specifies the hook as
       `taste learn --from-git-head &`, but PLAN.md's command list omits `learn`

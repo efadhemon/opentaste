@@ -53,7 +53,9 @@ handshake and gives you nothing to debug.
 
 ## Step 2: `server.rs` — the stdio loop
 
-- [ ] `pub fn serve<R: BufRead, W: Write>(reader: R, writer: W, store: &RuleStore) -> Result<()>`.
+- [ ] `pub fn serve<R: BufRead, W: Write>(reader: R, writer: W, store: &RuleStore) -> anyhow::Result<()>`.
+      This crate is a transport adapter rather than part of the core engine, so
+      `anyhow` is the right choice here and is already a declared dependency.
 - [ ] Handle `initialize`, the `notifications/initialized` acknowledgement,
       `tools/list`, `tools/call` and `ping`.
 - [ ] `initialize` result:
@@ -98,6 +100,11 @@ already tested.
 
 - [ ] `tools/list` returns exactly these three, each with a `name`,
       `description` and a JSON Schema `inputSchema`.
+- [ ] The third tool is named **`reject_coding_taste`**. SPEC.md's directory
+      listing in section 2 calls it `reject_taste` while section 7 calls it
+      `reject_coding_taste`; section 7 defines the actual interface, so it wins.
+      Spell it one way everywhere, because the name is part of the wire contract
+      and renaming it later silently breaks every editor already configured.
 - [ ] Write `record_coding_taste`'s description as the instruction to the model it
       actually is: *"Call this tool immediately whenever the user corrects your
       code style, architecture, naming, or explicitly states a coding

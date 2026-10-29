@@ -103,6 +103,23 @@ Two artefacts cross a phase boundary and must not be changed unilaterally:
   delta tracker must exclude exactly those paths, so it reads them from one list
   rather than hardcoding its own.
 
+## Deferred past v0.1
+
+These appear in SPEC.md but no phase implements them. They are listed here so
+nobody rediscovers them mid-phase and treats them as a blocker, and so nobody
+builds a weak version of one by accident.
+
+| Item | Where it appears | Why it is deferred |
+| --- | --- | --- |
+| `~/.taste/global.db`, cross-project rules | SPEC.md sections 2, 4.3; `Paths::global_db()` | The path helper exists and compiles, but nothing reads or writes the file and no phase in PLAN.md claims it. Project-local rules are the whole value proposition; sharing taste across unrelated repositories is a separate feature with its own privacy questions. |
+| Mining *recent git history* for patterns | SPEC.md section 1 | Phase 5's `taste learn --from-git-head` covers the last commit only, which is what the `post-commit` hook needs. Walking back through history multiplies the cost of a wrong detector across every commit ever made. |
+| Strict-null-check and zod-schema detection | SPEC.md section 2 (`types.rs`) | Strict null checking is a `tsconfig.json` setting, not a per-file statistical signal. Zod detection is plausible but was not worth a detector in the first release. |
+| Dependency-injection pattern detection | SPEC.md section 2 (`arch.rs`) | DI shape varies too much between frameworks to count reliably, and an unreliable count becomes a wrong rule. |
+| Control-flow flattening detector | SPEC.md section 5.2, item 5 | Planned last in [plans/PHASE-3.md](plans/PHASE-3.md) and explicitly droppable. It needs real tree-shape comparison and is the detector most likely to be confidently wrong. |
+
+If you implement one, move the row out of this table and into the relevant plan
+file in the same change.
+
 ## Standing engineering rules
 
 These apply to every phase and are the gate for calling one done.

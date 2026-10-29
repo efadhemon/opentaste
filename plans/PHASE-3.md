@@ -75,9 +75,12 @@ jobs:
 
 **Windows matters more than usual here.** Three things in the finished code have
 never executed on Windows: the CRLF handling in `transpiler/marker.rs`, the
-backslash normalisation in `storage::normalize_path`, and the `std::fs::File::lock`
-advisory lock in `storage/lock.rs`. Expect the first red build to be Windows and
-treat it as a real bug, not a CI quirk.
+backslash normalisation in `normalize_path` in `storage/mod.rs`, and the
+`std::fs::File::lock` advisory lock in `storage/lock.rs`. Of the three, the CRLF
+logic is the best defended — `marker.rs` has tests that feed it literal `\r\n`
+input — so the likelier failures are the lock, which behaves differently on
+Windows, and path handling under real backslash-separated paths. Expect the first
+red build to be Windows and treat it as a real bug, not a CI quirk.
 
 **Gate for part 0:** all four jobs green on `main`.
 
@@ -110,24 +113,31 @@ crates. All four report ABI 14 and parse correctly. Entry points are
 
 ### Step 1: `ast/parser.rs` — the multi-language wrapper
 
-- [ ] `pub enum SupportedLanguage { TypeScript, Tsx, Python, Rust, Go }` with
-      `from_path(&Path) -> Option<Self>` driven by file extension, plus
+- [ ] `pub enum SupportedLanguage { TypeScript, Tsx, JavaScript, Python, Rust, Go }`
+      with `from_path(&Path) -> Option<Self>` driven by file extension, plus
       `name(&self) -> &'static str` for diagnostics.
 - [ ] `fn language(self) -> tree_sitter::Language` returning the grammar.
 - [ ] `pub fn parse(lang: SupportedLanguage, source: &str) -> Option<Tree>`.
 - [ ] `pub fn content_hash(bytes: &[u8]) -> String` using the `sha2` dependency
       that is already present. Step 3 needs it and so does `FileSnapshot`.
 
-**Decision: map `.js`, `.jsx`, `.mjs` and `.cjs` onto the TSX grammar** rather
-than adding a sixth grammar crate. The TSX grammar parses plain JavaScript and
-JSX, and every analyzer in step 2 looks at node shapes that TypeScript and
-JavaScript share. Note it in a comment so the next reader knows it is a choice
-and not an oversight. `.ts` uses `LANGUAGE_TYPESCRIPT`, `.tsx` uses `LANGUAGE_TSX`.
+**Decision: `JavaScript` is a distinct variant that borrows the TSX grammar**
+rather than a sixth grammar crate. `.ts` uses `LANGUAGE_TYPESCRIPT`, `.tsx` uses
+`LANGUAGE_TSX`, and `.js`, `.jsx`, `.mjs` and `.cjs` use `LANGUAGE_TSX` too,
+since it parses plain JavaScript and JSX and every analyzer looks at node shapes
+the two languages share. Keeping the variant separate from `Tsx` still matters:
+`types.rs` must **skip JavaScript files entirely**, because `interface` and
+`type` cannot appear there and counting a file that could not have expressed
+either would dilute the ratio. Note the grammar reuse in a comment so the next
+reader knows it is a choice and not an oversight.
 
 **Hazard: `tree_sitter::Parser` is neither `Sync` nor cheap to construct.** Do
 not put one behind an `Arc` and do not build one per file. Give each worker
-thread its own with `thread_local!`, built lazily per language and reset between
-files with `Parser::reset`.
+thread its own with `thread_local!`, built lazily per language. Call
+`Parser::reset` only after a `parse` that returned `None` — by default the
+parser resumes where a failed parse left off, so one unparseable file would
+otherwise corrupt the next file that thread handles. It is not needed after a
+successful parse.
 
 ### Step 2: `ast/analyzers/` — statistical detectors
 
@@ -135,11 +145,20 @@ Four modules, per SPEC.md section 2:
 
 - [ ] `imports.rs` — alias (`@/`, `~/`) versus deep relative (`../../`), named
       versus default exports.
-- [ ] `types.rs` — `interface X {}` versus `type X = {}`.
+- [ ] `types.rs` — `interface X {}` versus `type X = {}`, skipping JavaScript
+      files.
 - [ ] `functions.rs` — `function foo()` versus `const foo = () =>`, and the
       presence of early-return guard clauses.
 - [ ] `arch.rs` — custom decorators (`@AutoEntity`) versus framework ones
       (`@Entity`), and custom error classes versus bare `Error`.
+
+**Scope narrowing, recorded on purpose.** SPEC.md section 2 also lists "strict
+null checks" and "zod schemas" under `types.rs` and "DI patterns" under
+`arch.rs`. PLAN.md already dropped all three. Strict null checking is a
+`tsconfig.json` setting rather than a per-file statistical signal, and DI shape
+varies too much between frameworks to count reliably. Leave all three out of
+v0.1 rather than implementing weak versions, and see the deferred list in
+[AGENTS.md](../AGENTS.md).
 
 **Key decision: analyzers count, they do not decide.** Each returns a `Tally` of
 raw counts for one file and never a rule. A separate `ast/promote.rs` folds
@@ -196,6 +215,8 @@ compose with rayon's `fold`/`reduce`, which forces a `Mutex` around the
 accumulator. Walking serially and then driving `par_iter` over the collected
 paths uses both crates honestly, needs no lock, and the walk is not the
 bottleneck. The sub-300ms target in SPEC.md section 1 is comfortable either way.
+This deliberately departs from SPEC.md section 8, which names
+`ignore::WalkParallel`; the reason above is the reason, so do not "fix" it back.
 
 **Hazard: `record_observation` takes the project lock on every call.** Aggregate
 first and record the handful of promotable observations at the end. Calling it
@@ -317,5 +338,8 @@ here; the git-hook wiring that drives it belongs to
       project and read the rules it produces. A human has to agree with them.
       This is the only gate that catches a detector that is confidently wrong,
       and it is not automatable.
+- [ ] Record the measured cold scan time on that project against SPEC.md section
+      1's sub-300ms claim. If it misses, write down the real number here rather
+      than quietly leaving the spec wrong.
 - [ ] Status at the top of this file set to `completed`, and any detector left
       unshipped recorded above with the reason.

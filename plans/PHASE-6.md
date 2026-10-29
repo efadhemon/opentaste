@@ -32,6 +32,8 @@ not exist yet.
 - [ ] Extend the CI workflow from [Phase 3](PHASE-3.md) part 0 with a Node job
       running `pnpm install --frozen-lockfile`, `tsc --noEmit` and the extension
       tests. A TypeScript package outside CI will break and nobody will notice.
+- [ ] Commit `pnpm-lock.yaml` in the same change as that job, or
+      `--frozen-lockfile` fails on its first run.
 
 ---
 
@@ -81,6 +83,13 @@ that range within 180 seconds, followed by a save, trigger `taste learn-delta`.
       `{ promoted: TasteRule[], candidates: {…}[] }`, both always present.
 - [ ] Tolerate an empty stdout with a non-zero exit code: that is how the binary
       reports failure, and it must be silent rather than a popup.
+- [ ] Pass `--file` as a path relative to the workspace folder, and spawn the
+      child with that folder as its working directory. `RuleStore::rules_for_file`
+      relativises against the project root, and `Paths::discover` walks up from
+      the working directory, so an absolute path from a different root silently
+      matches nothing.
+- [ ] Use `onDidSaveTextDocument`, not `onWillSaveTextDocument`. SPEC.md section
+      9 mentions both, but only the former sees the text that was actually saved.
 - [ ] Resolve the binary in this order: the workspace, then `PATH`, then the
       bundled download. Fail quietly when it is absent — **never nag**. A tool
       whose promise is staying out of the way cannot open a modal on startup.
@@ -119,6 +128,11 @@ corporate proxies, and is exactly the kind of network call a tool advertising
 - [ ] A release workflow building the matrix: `x86_64-unknown-linux-gnu`,
       `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
       `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
+- [ ] **Build each target on a native runner, not by cross-compiling.**
+      `rusqlite` is declared with the `bundled` feature, so every build compiles
+      SQLite from C. Cross-compiling therefore needs a full cross C toolchain,
+      not just `rustup target add`, and that is a deep hole to fall into on
+      release day. Use `ubuntu-24.04-arm` and `macos-14` for the arm64 targets.
 - [ ] Attach the binaries to a tagged GitHub release, and publish the platform
       packages plus the `opentaste` wrapper to npm.
 - [ ] Publish the extension to **both** the VS Code Marketplace (`vsce`) and Open
