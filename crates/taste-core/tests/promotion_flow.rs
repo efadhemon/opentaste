@@ -294,6 +294,50 @@ fn independent_preferences_accumulate_side_by_side() {
 }
 
 #[test]
+fn a_correction_in_one_package_never_reinforces_another_packages_rule() {
+    let project = Project::with_cache_db();
+    let instruction = "Prefer custom error classes over throwing bare `Error`.";
+    let observe = |scope: &str| {
+        project
+            .store
+            .record_observation(Observation::new(
+                RuleCategory::ErrorHandling,
+                scope,
+                RuleSource::AstDiff,
+                instruction,
+            ))
+            .unwrap()
+    };
+
+    assert!(matches!(
+        observe("apps/nextjs/**/*.tsx"),
+        Outcome::Created { .. }
+    ));
+    assert!(
+        matches!(
+            observe("apps/tanstack-start/**/*.tsx"),
+            Outcome::Created { .. }
+        ),
+        "a second package starts its own candidate"
+    );
+
+    let mut candidates = project.store.candidate_rules().unwrap();
+    candidates.sort_by(|a, b| a.scope.cmp(&b.scope));
+    let scopes: Vec<_> = candidates
+        .iter()
+        .map(|c| (c.scope.as_str(), c.occurrences))
+        .collect();
+    assert_eq!(
+        scopes,
+        vec![
+            ("apps/nextjs/**/*.tsx", 1),
+            ("apps/tanstack-start/**/*.tsx", 1)
+        ]
+    );
+    assert_ne!(candidates[0].id, candidates[1].id);
+}
+
+#[test]
 fn the_store_survives_being_reopened_between_observations() {
     let dir = tempfile::tempdir().unwrap();
     let paths = taste_core::config::Paths::for_root(dir.path());

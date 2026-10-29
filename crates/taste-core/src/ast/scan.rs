@@ -236,7 +236,11 @@ pub fn stored_tally(store: &RuleStore) -> Result<Tally> {
 }
 
 fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation) -> Result<bool> {
-    let id = rule_id(observation.category, &observation.instruction);
+    let id = rule_id(
+        observation.category,
+        &observation.scope,
+        &observation.instruction,
+    );
     // A deleted rule is the developer's answer to this exact ratio.
     if store.candidates().is_rejected(&id)? {
         return Ok(true);
@@ -245,7 +249,7 @@ fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation
         return Ok(true);
     }
     if let Some(opposite) = promote::opposite_instruction(&observation.instruction) {
-        let opposite_id = rule_id(observation.category, opposite);
+        let opposite_id = rule_id(observation.category, &observation.scope, opposite);
         if store.rules()?.find(&opposite_id).is_some() {
             return Ok(true);
         }
