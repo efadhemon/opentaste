@@ -8,10 +8,12 @@
 //! are recorded before snapshots: a crash in between re-scans the files
 //! instead of permanently skipping a promotion that never landed.
 
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
+use globset::{GlobBuilder, GlobSetBuilder};
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde_json::Value;
@@ -27,8 +29,8 @@ use super::parser::content_hash;
 use super::promote;
 use super::{analyze_source, SupportedLanguage, Tally};
 
-/// Files at or above this size are skipped. A megabyte is far past a source
-/// file the statistical detectors can usefully read.
+/// Files larger than this are skipped. A megabyte is far past a source file
+/// the statistical detectors can usefully read.
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// What one cold-start scan did.
@@ -61,6 +63,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     let mut cached: Vec<Tally> = Vec::new();
     let mut files_skipped = 0usize;
     let mut unchanged = 0usize;
+    let mut seen = HashSet::new();
 
     for entry in WalkBuilder::new(root)
         .standard_filters(true)
@@ -76,7 +79,10 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
             continue;
         };
         let path = entry.path();
-        let Some(lang) = SupportedLanguage::from_path(path) else {
+        // Checked before anything is read: a language with no analyzers would
+        // be read, hashed, parsed and snapshotted for no counts at all.
+        let Some(lang) = SupportedLanguage::from_path(path).filter(|lang| lang.has_analyzers())
+        else {
             continue;
         };
         let Ok(metadata) = entry.metadata() else {
@@ -103,6 +109,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         };
         let hash = content_hash(source.as_bytes());
         let relative = relative_key(root, path);
+        seen.insert(relative.clone());
         if let Some(snapshot) = store.candidates().get_snapshot(&relative)? {
             if snapshot.content_hash == hash {
                 if let Some(tally) = decode_tally(&snapshot.ast_signature) {
@@ -158,6 +165,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
             captured_at,
         })?;
     }
+    store.candidates().retain_snapshots(&seen)?;
 
     Ok(ScanReport {
         files_scanned,
@@ -252,29 +260,119 @@ fn relative_key(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// Languages, frameworks and databases the project uses, read from the root
+/// package and every workspace package of a monorepo.
 fn detect_stack(root: &Path) -> Vec<String> {
-    let mut stack = Vec::new();
-    if root.join("Cargo.toml").is_file() {
-        stack.push("rust".to_string());
-    }
-    if root.join("pyproject.toml").is_file() {
-        stack.push("python".to_string());
-    }
-    if root.join("go.mod").is_file() {
-        stack.push("go".to_string());
-    }
-    if let Some(names) = package_dependency_names(root) {
-        for name in names {
+    let mut stack = BTreeSet::new();
+    let mut packages = vec![root.to_path_buf()];
+    packages.extend(workspace_packages(root));
+    for dir in &packages {
+        for (marker, label) in [
+            ("Cargo.toml", "rust"),
+            ("pyproject.toml", "python"),
+            ("go.mod", "go"),
+            ("tsconfig.json", "typescript"),
+        ] {
+            if dir.join(marker).is_file() {
+                stack.insert(label);
+            }
+        }
+        for name in package_dependency_names(dir).unwrap_or_default() {
             if let Some(label) = stack_label(&name) {
-                if !stack.iter().any(|existing| existing == label) {
-                    stack.push(label.to_string());
-                }
+                stack.insert(label);
             }
         }
     }
-    stack.sort();
-    stack
+    stack.into_iter().map(str::to_string).collect()
 }
+
+/// Directories of a JavaScript monorepo's workspace packages, from
+/// `workspaces` in the root `package.json` and from `pnpm-workspace.yaml`.
+fn workspace_packages(root: &Path) -> Vec<PathBuf> {
+    let mut patterns = Vec::new();
+    if let Ok(text) = fs::read_to_string(root.join("package.json")) {
+        if let Ok(value) = serde_json::from_str::<Value>(&text) {
+            let list = value
+                .get("workspaces")
+                .and_then(|w| w.as_array().or_else(|| w.get("packages")?.as_array()));
+            patterns.extend(
+                list.into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string),
+            );
+        }
+    }
+    if let Ok(text) = fs::read_to_string(root.join("pnpm-workspace.yaml")) {
+        patterns.extend(pnpm_workspace_patterns(&text));
+    }
+    if patterns.is_empty() {
+        return Vec::new();
+    }
+
+    let set = |negated: bool| {
+        let mut builder = GlobSetBuilder::new();
+        for pattern in &patterns {
+            let (is_negated, body) = match pattern.strip_prefix('!') {
+                Some(body) => (true, body),
+                None => (false, pattern.as_str()),
+            };
+            if is_negated == negated {
+                if let Ok(glob) = GlobBuilder::new(body.trim_end_matches('/'))
+                    .literal_separator(true)
+                    .build()
+                {
+                    builder.add(glob);
+                }
+            }
+        }
+        builder.build().ok()
+    };
+    let (Some(include), Some(exclude)) = (set(false), set(true)) else {
+        return Vec::new();
+    };
+
+    WalkBuilder::new(root)
+        .max_depth(Some(WORKSPACE_DEPTH))
+        .filter_entry(|entry| entry.file_name() != "node_modules")
+        .build()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let relative = entry.path().strip_prefix(root).ok()?.to_path_buf();
+            let matched = !relative.as_os_str().is_empty()
+                && include.is_match(&relative)
+                && !exclude.is_match(&relative)
+                && entry.path().join("package.json").is_file();
+            matched.then(|| entry.path().to_path_buf())
+        })
+        .collect()
+}
+
+/// The `packages:` list of a `pnpm-workspace.yaml`. Only that list is read,
+/// which keeps a YAML parser out of the dependency tree.
+fn pnpm_workspace_patterns(text: &str) -> Vec<String> {
+    let mut patterns = Vec::new();
+    let mut in_packages = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if !line.starts_with([' ', '\t', '-']) {
+            in_packages = trimmed == "packages:";
+            continue;
+        }
+        if let (true, Some(item)) = (in_packages, trimmed.strip_prefix('-')) {
+            let item = item.split(" #").next().unwrap_or(item).trim();
+            patterns.push(item.trim_matches(['\'', '"']).to_string());
+        }
+    }
+    patterns
+}
+
+/// How deep workspace packages are looked for: `apps/*` and `packages/*/*`.
+const WORKSPACE_DEPTH: usize = 4;
 
 fn package_dependency_names(root: &Path) -> Option<Vec<String>> {
     let text = fs::read_to_string(root.join("package.json")).ok()?;
@@ -290,6 +388,14 @@ fn package_dependency_names(root: &Path) -> Option<Vec<String>> {
 
 fn stack_label(name: &str) -> Option<&'static str> {
     match name {
+        "typescript" => Some("typescript"),
+        "pg" | "postgres" | "pg-promise" => Some("postgresql"),
+        "mysql" | "mysql2" => Some("mysql"),
+        "mongodb" | "mongoose" => Some("mongodb"),
+        "sqlite3" | "better-sqlite3" => Some("sqlite"),
+        "prisma" | "@prisma/client" => Some("prisma"),
+        "typeorm" => Some("typeorm"),
+        "drizzle-orm" => Some("drizzle"),
         "react" | "react-dom" => Some("react"),
         "next" => Some("next"),
         "vue" => Some("vue"),

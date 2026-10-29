@@ -193,3 +193,64 @@ fn a_deleted_console_call_does_not_hide_a_replaced_one() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].instruction, taste_core::diff::PREFER_LOGGER);
 }
+
+const THROW_BEFORE: &str =
+    "export function f(id: string) {\n  if (!id) throw new Error(\"missing\");\n}\n";
+const THROW_AFTER: &str =
+    "export function f(id: string) {\n  if (!id) throw new NotFoundError(\"missing\");\n}\n";
+
+fn scopes_in(root: &Path, file: &str) -> Vec<String> {
+    let paths = taste_core::config::Paths::for_root(root);
+    taste_core::analyze_in(&paths, THROW_BEFORE, THROW_AFTER, Path::new(file))
+        .unwrap()
+        .into_iter()
+        .map(|observation| observation.scope)
+        .collect()
+}
+
+#[test]
+fn a_correction_in_a_monorepo_package_is_scoped_to_that_package() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("apps/api/src/users")).unwrap();
+    fs::write(dir.path().join("package.json"), "{}").unwrap();
+    fs::write(dir.path().join("apps/api/package.json"), "{}").unwrap();
+
+    assert_eq!(
+        scopes_in(dir.path(), "apps/api/src/users/user.service.ts"),
+        vec!["apps/api/**/*.service.ts".to_string()]
+    );
+}
+
+#[test]
+fn a_correction_outside_any_nested_package_keeps_its_usual_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("src/users")).unwrap();
+    fs::write(dir.path().join("package.json"), "{}").unwrap();
+
+    assert_eq!(
+        scopes_in(dir.path(), "src/users/user.service.ts"),
+        vec!["src/**/*.service.ts".to_string()]
+    );
+    // A folder named like a package but without a manifest is not one.
+    fs::create_dir_all(dir.path().join("apps/api/src")).unwrap();
+    assert_eq!(
+        scopes_in(dir.path(), "apps/api/src/user.service.ts"),
+        vec!["apps/**/*.service.ts".to_string()]
+    );
+}
+
+#[test]
+fn any_package_manifest_marks_a_package() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("services/billing/web")).unwrap();
+    fs::write(
+        dir.path().join("services/billing/go.mod"),
+        "module billing\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        scopes_in(dir.path(), "services/billing/web/user.service.ts"),
+        vec!["services/billing/**/*.service.ts".to_string()]
+    );
+}

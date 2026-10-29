@@ -150,6 +150,18 @@ test('a window inside its lifetime fires once and then closes', () => {
   assert.deepEqual(tracker.onSave(FILE, doc.read), [], 'a second save does not resend it');
 });
 
+test('a correction longer than fifteen characters, like a code action, still counts', () => {
+  const { tracker, doc } = setup();
+  const block = 'export function findUser(id: string) {\n  return db.get(id);\n}\nexport const x = 1;\n';
+  tracker.onChange(FILE, [doc.insertAt(1, block)], undefined, doc.read);
+  // "Convert to arrow function" rewrites the header line in one edit.
+  tracker.onChange(FILE, [doc.editLine(1, 'export const findUser = (id: string) => {')], undefined, doc.read);
+  const deltas = tracker.onSave(FILE, doc.read);
+  assert.equal(deltas.length, 1);
+  assert.equal(deltas[0]?.before.split('\n')[0], 'export function findUser(id: string) {');
+  assert.equal(deltas[0]?.after.split('\n')[0], 'export const findUser = (id: string) => {');
+});
+
 test('expiry drops stale windows without a save', () => {
   const { tracker, doc, advance } = setup();
   tracker.onChange(FILE, [doc.insertAt(1, AI_BLOCK)], undefined, doc.read);

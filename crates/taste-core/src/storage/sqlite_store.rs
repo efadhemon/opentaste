@@ -5,6 +5,7 @@
 //! skip unchanged files. Keeping them out of git is what lets OpenTaste observe
 //! aggressively without generating review noise.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -15,7 +16,7 @@ use crate::models::{round2, CandidateRule, RuleCategory, RuleSource};
 use crate::storage::atomic::ensure_parent_dir;
 
 /// Schema version this build expects; bumped whenever a migration is added.
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 /// A recorded AST fingerprint for one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,6 +124,21 @@ impl SqliteStore {
                 CREATE TABLE IF NOT EXISTS learned_changes (
                     fingerprint TEXT PRIMARY KEY,
                     learned_at TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+
+        if current < 4 {
+            // Observations the editor extension recorded through
+            // `learn-delta`. When the corrected code is committed, the
+            // post-commit hook finds the same correction in the commit; this
+            // is how it knows not to count it a second time.
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS pending_deltas (
+                    key TEXT PRIMARY KEY,
+                    recorded_at TEXT NOT NULL
                 );
                 "#,
             )?;
@@ -268,6 +284,37 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Remember an observation the editor extension just recorded.
+    pub fn remember_delta(&self, key: &str) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO pending_deltas (key, recorded_at) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET recorded_at = excluded.recorded_at
+            "#,
+            params![key, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Forget an observation the editor extension recorded, returning whether
+    /// it was there. Each one is taken at most once.
+    pub fn take_delta(&self, key: &str) -> Result<bool> {
+        let removed = self
+            .conn
+            .execute("DELETE FROM pending_deltas WHERE key = ?1", params![key])?;
+        Ok(removed > 0)
+    }
+
+    /// Drop recorded observations older than `cutoff`: edits that were never
+    /// committed, or were committed while the hook was not installed.
+    pub fn prune_deltas(&self, cutoff: DateTime<Utc>) -> Result<usize> {
+        let removed = self.conn.execute(
+            "DELETE FROM pending_deltas WHERE recorded_at < ?1",
+            params![cutoff.to_rfc3339()],
+        )?;
+        Ok(removed)
+    }
+
     /// Number of stored candidates.
     pub fn count_candidates(&self) -> Result<u32> {
         let count: u32 =
@@ -325,6 +372,22 @@ impl SqliteStore {
                 })
             })
             .transpose()
+    }
+
+    /// Delete the fingerprint of every file not in `keep`, returning how many
+    /// went. The scanner passes the files its walk saw, so deleted, renamed
+    /// and newly ignored files stop contributing stale tallies.
+    pub fn retain_snapshots(&self, keep: &HashSet<String>) -> Result<usize> {
+        let mut removed = 0;
+        for snapshot in self.list_snapshots()? {
+            if !keep.contains(&snapshot.file_path) {
+                removed += self.conn.execute(
+                    "DELETE FROM file_snapshots WHERE file_path = ?1",
+                    params![snapshot.file_path],
+                )?;
+            }
+        }
+        Ok(removed)
     }
 
     /// Every recorded fingerprint, ordered by path.
@@ -478,6 +541,30 @@ mod tests {
     }
 
     #[test]
+    fn a_remembered_delta_is_taken_once_and_old_ones_are_pruned() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.remember_delta("fresh").unwrap();
+        store.remember_delta("stale").unwrap();
+        store
+            .connection()
+            .execute(
+                "UPDATE pending_deltas SET recorded_at = ?1 WHERE key = 'stale'",
+                params![(Utc::now() - chrono::Duration::days(40)).to_rfc3339()],
+            )
+            .unwrap();
+
+        assert_eq!(
+            store
+                .prune_deltas(Utc::now() - chrono::Duration::days(30))
+                .unwrap(),
+            1
+        );
+        assert!(!store.take_delta("stale").unwrap());
+        assert!(store.take_delta("fresh").unwrap());
+        assert!(!store.take_delta("fresh").unwrap(), "taken at most once");
+    }
+
+    #[test]
     fn a_fresh_database_has_both_tables_and_the_current_schema_version() {
         let store = SqliteStore::open_in_memory().unwrap();
         let version: i32 = store
@@ -491,6 +578,7 @@ mod tests {
             "file_snapshots",
             "rejected_rules",
             "learned_changes",
+            "pending_deltas",
         ] {
             let found: i32 = store
                 .connection()

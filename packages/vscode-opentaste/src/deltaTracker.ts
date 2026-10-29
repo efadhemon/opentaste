@@ -1,9 +1,15 @@
 // Detect "an AI wrote a block, then a human corrected it, then saved".
 //
 // A single change that inserts at least four lines opens an AiBurstWindow over
-// the inserted lines. Smaller edits inside that window mark it corrected. On
+// the inserted lines. Any smaller edit inside that window marks it corrected. On
 // save, a corrected window younger than 180 seconds yields a delta: the
 // snapshot taken when the block landed, and the same lines as saved.
+//
+// "Smaller" means "not itself a burst", with no character limit. SPEC.md once
+// said 1–15 characters, but most corrections the detectors learn from arrive
+// as one longer edit: a pasted import path, a rename, a "convert to arrow
+// function" code action. The detectors decide what counts; this only decides
+// which lines to hand them.
 //
 // This module does not import `vscode`. The extension adapts editor events to
 // the small types below, which is what lets the three hazards be tested by

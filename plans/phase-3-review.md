@@ -291,6 +291,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    the tree away. Check `is_script()` first. Better still, skip non-script files
    in `scan` before reading them, since today they are read, hashed, parsed,
    and snapshotted for no counts at all.
+   **Status: done** in phase 7 step 8.
 4. **Read and hash in parallel.** `scan` reads and SHA-256-hashes every file in
    the serial loop, and only the parse runs on rayon. Moving the read, hash and
    snapshot lookup into `par_iter` (the snapshot lookup is a cheap SQLite read,
@@ -298,21 +299,27 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    release time on the 991-file tree get closer to the spec.
 5. **Stale snapshots.** Snapshot rows for deleted files are never removed.
    Prune paths the walk did not see.
+   **Status: done** in phase 7 step 8.
 6. **Monorepo scope.** `scope_for_path("apps/api/src/x.service.ts")` gives
    `apps/**/*.service.ts`, which covers every app. For monorepos, consider
    scoping to the nearest directory that has a `package.json`.
+   **Status: done** in phase 7 step 5.
 7. **Monorepo stack detection.** `detect_stack` reads only the root
    `package.json`. Workspaces (`apps/*/package.json`) are not detected.
+   **Status: done** in phase 7 step 5.
 8. **Contradiction checks are probably too strict for decorators.** A decorator
    anti-pattern like `@Get()` is shorter than `MIN_NEEDLE` (8), so it can never
    contradict. That is safe, but rules from `DecoratorSwap` will rarely decay.
    Once B2 is fixed, match decorators by name structurally instead.
+   **Status: done** in phase 7 step 2.
 9. **Doc mismatch.** `MAX_FILE_BYTES` says files "at or above" the size are
    skipped, but the code uses `>`.
+   **Status: done** in phase 7 step 8.
 10. **Exports counting.** Re-export barrels (`export * from`, `export { x } from`)
     and `export type {…}` count as named exports. That is defensible, but it
     inflates the "named" side in barrel-heavy projects. Consider excluding
     re-exports.
+    **Status: done** in phase 7 step 6.
 11. **Test gaps worth adding with the fixes:** a scrubber case per secret shape
     in B1; negative fixtures for `@Get`→`@Post` and `Error`→`NotFoundException`;
     a scan test with a `node_modules` directory and no `.gitignore`; a
@@ -326,6 +333,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
     low-entropy text around it hides it from the entropy check too. That is
     rare in real code, but `(?:^|[^A-Za-z0-9])` in place of `\b` would close
     it for the prefixes that cannot start an English word.
+    **Status: done** in phase 7 step 7.
 
 ## Suggested order
 

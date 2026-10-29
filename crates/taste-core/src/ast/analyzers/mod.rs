@@ -139,12 +139,20 @@ impl Tally {
 /// Incremental rescans skip the parse but still have to fold the file into the
 /// repository ratio. The signature is that file's counts, not a second copy of
 /// the source.
+/// Version tag on every cached tally. Bump it whenever an analyzer counts
+/// differently, so the next scan recounts files whose snapshot was written by
+/// an older build instead of reusing their stale tallies.
+///
+/// - `tally2`: re-exports and `export type { … }` stopped counting as named
+///   exports.
+const TALLY_FORMAT: &str = "tally2";
+
 pub(crate) fn encode_tally(tally: &Tally) -> String {
     fn part(count: Count) -> String {
         format!("{},{},{}", count.left, count.right, count.files)
     }
     format!(
-        "tally1;{};{};{};{};{};{};{}",
+        "{TALLY_FORMAT};{};{};{};{};{};{};{}",
         part(tally.import_paths),
         part(tally.exports),
         part(tally.type_constructs),
@@ -156,7 +164,7 @@ pub(crate) fn encode_tally(tally: &Tally) -> String {
 }
 
 pub(crate) fn decode_tally(signature: &str) -> Option<Tally> {
-    let rest = signature.strip_prefix("tally1;")?;
+    let rest = signature.strip_prefix(TALLY_FORMAT)?.strip_prefix(';')?;
     let mut parts = rest.split(';');
     Some(Tally {
         import_paths: decode_count(parts.next()?)?,
@@ -237,6 +245,48 @@ mod tests {
             "#,
         );
         assert_eq!(got.import_paths, Count::from_sides(2, 1));
+    }
+
+    #[test]
+    fn a_tally_cached_by_an_older_format_is_not_reused() {
+        let current = encode_tally(&Tally::default());
+        assert!(decode_tally(&current).is_some());
+        let older = current.replacen(TALLY_FORMAT, "tally1", 1);
+        assert_eq!(decode_tally(&older), None);
+    }
+
+    #[test]
+    fn a_barrel_file_counts_toward_neither_export_style() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+export * from "./user";
+export * as orders from "./orders";
+export { createUser, deleteUser } from "./user.service";
+export { default as Button } from "./button";
+export type { User, UserFilter } from "./user.types";
+"#,
+        );
+        assert_eq!(got.exports, Count::default(), "{:?}", got.exports);
+    }
+
+    #[test]
+    fn a_module_with_a_re_export_counts_only_what_it_defines() {
+        let got = tally(
+            SupportedLanguage::TypeScript,
+            r#"
+import type { User } from "./user";
+export const loadUser = (id: string) => id;
+export function saveUser(user: User) {}
+export type UserId = string;
+export interface UserRow { id: string }
+export type { User };
+export { formatUser } from "./format";
+export default loadUser;
+"#,
+        );
+        // Four declarations are named exports; the default is the default.
+        assert_eq!(got.exports, Count::from_sides(4, 1), "{:?}", got.exports);
     }
 
     #[test]

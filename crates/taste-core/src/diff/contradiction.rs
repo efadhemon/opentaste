@@ -1,4 +1,4 @@
-//! Find active rules whose rejected snippet the developer just wrote.
+//! Find confirmed rules whose rejected snippet the developer just wrote.
 //!
 //! A false contradiction decays a correct rule, which is harder to notice than
 //! a missing one. Two things keep the match honest:
@@ -10,12 +10,16 @@
 //! - Each occurrence has to be a tight syntax node, not a mention in a comment
 //!   or a string, unless the file cannot be parsed. Then only a long snippet
 //!   is trusted as a normalised-whitespace substring.
+//!
+//! An anti-pattern that is a single decorator, such as `@Entity()`, is too
+//! short to trust as text. It is matched by name against the `decorator`
+//! nodes of the syntax tree instead, whatever their arguments.
 
 use std::path::Path;
 
 use tree_sitter::Node;
 
-use crate::ast::{node_text, parse, SupportedLanguage};
+use crate::ast::{decorator_name, node_text, parse, SupportedLanguage};
 use crate::error::Result;
 use crate::storage::RuleStore;
 
@@ -23,8 +27,9 @@ const MIN_NEEDLE: usize = 8;
 const FALLBACK_NEEDLE: usize = 24;
 const SLACK: usize = 48;
 
-/// Identifiers of active rules whose `anti_pattern` the edit from `before`
-/// to `after` introduced.
+/// Identifiers of enabled confirmed rules whose `anti_pattern` the edit from
+/// `before` to `after` introduced. Rules below the promotion confidence are
+/// included, so a rule that keeps being contradicted reaches demotion.
 pub fn contradictions(
     store: &RuleStore,
     path: &Path,
@@ -32,10 +37,16 @@ pub fn contradictions(
     after: &str,
 ) -> Result<Vec<String>> {
     let mut ids = Vec::new();
-    for rule in store.rules_for_file(path)? {
+    for rule in store.enabled_rules_for_file(path)? {
         let Some(anti) = rule.anti_pattern.as_deref() else {
             continue;
         };
+        if let Some(name) = single_decorator(anti) {
+            if decorators_named(&name, after, path) > decorators_named(&name, before, path) {
+                ids.push(rule.id);
+            }
+            continue;
+        }
         let needle = normalize_ws(anti);
         if needle.len() < MIN_NEEDLE {
             continue;
@@ -45,6 +56,45 @@ pub fn contradictions(
         }
     }
     Ok(ids)
+}
+
+/// The name of the decorator when `anti` is exactly one decorator, as
+/// `@Entity()`, `@Entity("users")` or `@orm.Entity` are.
+fn single_decorator(anti: &str) -> Option<String> {
+    let anti = anti.trim();
+    if anti.lines().count() != 1 {
+        return None;
+    }
+    let rest = anti.strip_prefix('@')?;
+    let callee = match rest.find('(') {
+        Some(open) if rest.ends_with(')') => &rest[..open],
+        Some(_) => return None,
+        None => rest,
+    };
+    let name = callee.trim().rsplit('.').next()?;
+    let mut chars = name.chars();
+    let first = chars.next()?;
+    let is_identifier = (first.is_alphabetic() || first == '_' || first == '$')
+        && chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$');
+    is_identifier.then(|| name.to_string())
+}
+
+/// Decorators called `name` in `source`. Comments and strings hold no
+/// `decorator` nodes, so they never count. An unparseable file counts none.
+fn decorators_named(name: &str, source: &str, path: &Path) -> usize {
+    let Some(tree) = SupportedLanguage::from_path(path).and_then(|lang| parse(lang, source)) else {
+        return 0;
+    };
+    let mut found = 0;
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "decorator" && decorator_name(node, source).as_deref() == Some(name) {
+            found += 1;
+        }
+        let mut cursor = node.walk();
+        stack.extend(node.named_children(&mut cursor));
+    }
+    found
 }
 
 fn occurrences(needle: &str, source: &str, path: &Path) -> usize {
@@ -128,6 +178,75 @@ mod tests {
             )
             .unwrap();
         (dir, store)
+    }
+
+    const USER: &str = "src/users/user.entity.ts";
+
+    #[test]
+    fn a_short_decorator_anti_pattern_is_contradicted_by_name_whatever_its_arguments() {
+        let (_dir, store) = store_with("@Entity()", "src/**/*.ts");
+        let ids = contradictions(
+            &store,
+            Path::new(USER),
+            "export class User {}\n",
+            "export class User {}\n@Entity(\"orders\")\nexport class Order {}\n",
+        )
+        .unwrap();
+        assert_eq!(ids.len(), 1, "{ids:?}");
+    }
+
+    #[test]
+    fn a_short_decorator_mentioned_in_a_comment_or_string_does_not_contradict() {
+        let (_dir, store) = store_with("@Entity()", "src/**/*.ts");
+        let ids = contradictions(
+            &store,
+            Path::new(USER),
+            "export class User {}\n",
+            "// not @Entity() here\nconst note = \"@Entity()\";\nexport class User {}\n",
+        )
+        .unwrap();
+        assert!(ids.is_empty(), "{ids:?}");
+    }
+
+    #[test]
+    fn a_legacy_short_decorator_the_edit_kept_does_not_contradict() {
+        let (_dir, store) = store_with("@Entity()", "src/**/*.ts");
+        let legacy = "@Entity()\nexport class User {}\n";
+        let ids = contradictions(
+            &store,
+            Path::new(USER),
+            legacy,
+            &format!("{legacy}export const extra = 1;\n"),
+        )
+        .unwrap();
+        assert!(ids.is_empty(), "{ids:?}");
+    }
+
+    #[test]
+    fn a_decorator_whose_name_only_starts_the_same_does_not_contradict() {
+        let (_dir, store) = store_with("@Entity()", "src/**/*.ts");
+        let ids = contradictions(
+            &store,
+            Path::new(USER),
+            "",
+            "@EntityRepository()\nexport class UserRepository {}\n",
+        )
+        .unwrap();
+        assert!(ids.is_empty(), "{ids:?}");
+    }
+
+    #[test]
+    fn single_decorator_reads_the_name_of_exactly_one_decorator() {
+        assert_eq!(single_decorator("@Entity()").as_deref(), Some("Entity"));
+        assert_eq!(
+            single_decorator(" @Entity(\"users\") ").as_deref(),
+            Some("Entity")
+        );
+        assert_eq!(single_decorator("@orm.Entity").as_deref(), Some("Entity"));
+        assert_eq!(single_decorator("@Entity()\nexport class User {}"), None);
+        assert_eq!(single_decorator("throw new Error()"), None);
+        assert_eq!(single_decorator("@Entity() class X {}"), None);
+        assert_eq!(single_decorator("@"), None);
     }
 
     #[test]

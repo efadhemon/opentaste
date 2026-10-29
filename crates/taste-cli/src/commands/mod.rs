@@ -11,7 +11,30 @@ pub mod targets;
 pub mod toggle;
 pub mod watch;
 
-use taste_core::Outcome;
+use std::path::Path;
+
+use taste_core::{content_hash, Observation, Outcome};
+
+/// Identifies one observation of one edit to one file, so the editor
+/// extension and the post-commit hook can tell they saw the same correction.
+/// Built from what the detector extracted, not from the surrounding text,
+/// which differs between the extension's block and the committed file.
+pub fn delta_key(path: &Path, observation: &Observation) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let parts = [
+        path.as_str(),
+        observation.category.slug(),
+        observation.instruction.as_str(),
+        observation.anti_pattern.as_deref().unwrap_or(""),
+        observation.preferred_pattern.as_deref().unwrap_or(""),
+    ];
+    let mut bytes = Vec::new();
+    for part in parts {
+        bytes.extend_from_slice(part.as_bytes());
+        bytes.push(0);
+    }
+    content_hash(&bytes)
+}
 
 /// One line describing what recording an observation did.
 pub fn describe_outcome(outcome: &Outcome) -> String {

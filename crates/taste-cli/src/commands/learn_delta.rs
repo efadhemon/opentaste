@@ -5,6 +5,10 @@
 //! carries exactly one line, `{"promoted": [TasteRule…], "candidates":
 //! [{id, confidence, instruction}…]}`, both arrays always present, and
 //! nothing else. Errors go to stderr with a non-zero exit and an empty stdout.
+//!
+//! Every observation recorded here is also remembered in the cache, so the
+//! post-commit hook does not count the same correction again when it is
+//! committed. See [`crate::commands::delta_key`].
 
 use std::io::{Read, Write};
 use std::path::Path;
@@ -12,6 +16,11 @@ use std::path::Path;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use taste_core::{Outcome, RuleStore, TasteRule};
+
+use crate::commands::delta_key;
+
+/// A remembered edit the hook never claimed is forgotten after this long.
+const PENDING_DELTA_DAYS: i64 = 30;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,14 +63,20 @@ pub fn learn(store: &RuleStore, file: &Path, before: &str, after: &str) -> anyho
     // The scope is derived from the path, so an absolute path would widen it
     // to `**/*.ext`.
     let relative = store.paths().relativize(file).to_path_buf();
-    let observations = taste_core::analyze(before, after, &relative)?;
+    let observations = taste_core::analyze_in(store.paths(), before, after, &relative)?;
+    store
+        .candidates()
+        .prune_deltas(chrono::Utc::now() - chrono::Duration::days(PENDING_DELTA_DAYS))?;
     let mut learned = Learned {
         promoted: Vec::new(),
         candidates: Vec::new(),
     };
     for observation in observations {
         let instruction = observation.instruction.clone();
-        match store.record_observation(observation)? {
+        let key = delta_key(&relative, &observation);
+        let outcome = store.record_observation(observation)?;
+        store.candidates().remember_delta(&key)?;
+        match outcome {
             Outcome::Promoted(rule) => learned.promoted.push(*rule),
             Outcome::Created { id, confidence } | Outcome::Reinforced { id, confidence, .. } => {
                 learned.candidates.push(Candidate {

@@ -32,6 +32,9 @@ pub const SCHEMA_VERSION: &str = "1.0.0";
 
 /// Confidence a rule must reach before it is written to `.taste/rules.json`.
 pub const PROMOTION_CONFIDENCE: f32 = 0.80;
+
+/// Files that mark a directory as its own package inside a monorepo.
+pub const PACKAGE_MANIFESTS: [&str; 4] = ["package.json", "Cargo.toml", "pyproject.toml", "go.mod"];
 /// Independent observations a rule needs before promotion.
 pub const PROMOTION_OCCURRENCES: u32 = 3;
 /// Confidence below which a confirmed rule falls back to being a candidate.
@@ -153,6 +156,23 @@ impl Paths {
         in_cursor_dir
             && name.starts_with(CURSOR_RULE_PREFIX)
             && name.ends_with(&format!(".{CURSOR_RULE_EXTENSION}"))
+    }
+
+    /// The nearest directory strictly below the project root, walking up from
+    /// the file at `relative`, that holds one of [`PACKAGE_MANIFESTS`]: a
+    /// package of a monorepo. Returned relative to the root with `/`
+    /// separators. `None` for a file that belongs to the root package.
+    pub fn package_dir(&self, relative: &Path) -> Option<String> {
+        let parent = relative.parent()?;
+        parent
+            .ancestors()
+            .take_while(|dir| !dir.as_os_str().is_empty())
+            .find(|dir| {
+                PACKAGE_MANIFESTS
+                    .iter()
+                    .any(|manifest| self.project_root.join(dir).join(manifest).is_file())
+            })
+            .map(|dir| dir.to_string_lossy().replace('\\', "/"))
     }
 
     /// Render a path relative to the project root for display, falling back to

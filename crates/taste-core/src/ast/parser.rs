@@ -76,6 +76,13 @@ impl SupportedLanguage {
         matches!(self, Self::TypeScript | Self::Tsx | Self::JavaScript)
     }
 
+    /// Whether OpenTaste learns anything from this language yet. The scanner
+    /// and the post-commit hook skip other files before reading them. This is
+    /// the one switch to flip when a language gains analyzers and detectors.
+    pub fn has_analyzers(self) -> bool {
+        self.is_script()
+    }
+
     /// Grammar for this language.
     ///
     /// JavaScript borrows the TSX grammar: it parses plain JavaScript and JSX,

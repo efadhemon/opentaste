@@ -424,7 +424,8 @@ Works natively in **VS Code, Cursor, and Windsurf** (published to both VS Code M
    Listens to `vscode.workspace.onDidChangeTextDocument`. When a change event inserts `>= 4` lines of code in a single transaction (characteristic of Cursor Agent/Tab accept, Copilot accept, or paste), records an `AiBurstWindow`:
    - `filePath`, `startLine`, `endLine`, `aiSnapshotText`, `timestamp`.
 2. **Capturing the Human Correction:**
-   If the developer makes subsequent manual edits (1–15 char changes, deletions, or line modifications) within the same `startLine..endLine` range within **180 seconds**, and then **saves the file (`onWillSaveTextDocument` / `onDidSaveTextDocument`)**:
+   If the developer makes any subsequent edit within the same `startLine..endLine` range that is not itself a burst (typing, deletions, line modifications, a rename or a code action), within **180 seconds**, and then **saves the file (`onDidSaveTextDocument`, the only event that sees the saved text)**:
+   - There is deliberately no size limit on that edit. The corrections the diff detectors learn from are often a single edit longer than 15 characters: pasting `'@/shared/errors'` over a relative import (17), `this.logger.log(` over `console.log(` (16), or a "convert to arrow function" code action (41 on one line). Precision comes from the detectors, which ignore anything that is not one of their exact transformations.
    - Extracts the `before` block (`aiSnapshotText`) and `after` block (current saved text in that range).
    - Spawns `taste learn-delta --file <relative_path>` via `stdin`.
 3. **Non-Intrusive Feedback Toast:**

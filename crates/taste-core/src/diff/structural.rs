@@ -19,6 +19,7 @@ use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
     node_text, parse, unquote, ScriptQuery, SupportedLanguage,
 };
+use crate::config::Paths;
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
@@ -568,6 +569,38 @@ fn file_pattern(file: &str) -> String {
     } else {
         format!("*.{ext}")
     }
+}
+
+/// [`analyze`], with each scope narrowed to the monorepo package that holds
+/// `path`: `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`
+/// rather than `apps/**/*.service.ts`, which would cover every app. A file in
+/// the root package keeps the scope [`analyze`] gives it.
+pub fn analyze_in(
+    paths: &Paths,
+    before: &str,
+    after: &str,
+    path: &Path,
+) -> crate::error::Result<Vec<Observation>> {
+    let mut observations = analyze(before, after, path)?;
+    if let Some(package) = paths.package_dir(path) {
+        for observation in &mut observations {
+            observation.scope = package_scope(&observation.scope, &package);
+        }
+    }
+    Ok(observations)
+}
+
+/// `scope`'s file pattern under `package`, or `scope` unchanged when the
+/// package path cannot be written as a glob.
+fn package_scope(scope: &str, package: &str) -> String {
+    let pattern = scope
+        .rsplit_once("**/")
+        .map_or(scope, |(_, pattern)| pattern);
+    let narrowed = format!("{package}/**/{pattern}");
+    if glob_meta(package) || validate_scope(&narrowed).is_err() {
+        return scope.to_string();
+    }
+    narrowed
 }
 
 fn glob_meta(value: &str) -> bool {

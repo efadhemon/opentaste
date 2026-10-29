@@ -509,6 +509,104 @@ fn an_amended_commit_with_the_same_change_is_not_learned_from_again() {
     assert_eq!(stdout(&taste(root, &["status"])), status_before_amend);
 }
 
+const SERVICE: &str = "src/users/user.service.ts";
+const BASE: &str = "export const ping = () => 1;\n";
+
+fn find_user(error_class: &str, message: &str) -> String {
+    format!(
+        "export function findUser(id: string) {{\n  if (!id) throw new {error_class}(\"{message}\");\n  return db.get(id);\n}}\n"
+    )
+}
+
+/// The candidate's occurrence count, as `taste status` prints it.
+fn seen(root: &Path) -> String {
+    let status = stdout(&taste(root, &["status"]));
+    let line = status
+        .lines()
+        .find(|line| line.contains("· seen"))
+        .unwrap_or_else(|| panic!("no candidate in:\n{status}"));
+    line.split("· seen ").nth(1).unwrap().to_string()
+}
+
+#[test]
+fn a_correction_the_extension_learned_is_not_counted_again_when_committed() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    let ai = find_user("Error", "missing id");
+    let fixed = find_user("NotFoundError", "missing id");
+
+    // The AI's block is committed, then corrected in the editor and saved.
+    commit(root, SERVICE, BASE);
+    commit(root, SERVICE, &format!("{BASE}{ai}"));
+    learn_delta(root, SERVICE, &ai, &fixed);
+    assert!(seen(root).starts_with("1 time"), "{}", seen(root));
+
+    // The correction is committed, and the hook sees the same edit.
+    commit(root, SERVICE, &format!("{BASE}{fixed}"));
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("already    learned from the editor"),
+        "{}",
+        stdout(&output)
+    );
+    assert!(seen(root).starts_with("1 time"), "{}", seen(root));
+}
+
+#[test]
+fn two_different_corrections_of_the_same_kind_still_count_twice() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+
+    // The extension learns one correction...
+    commit(root, SERVICE, BASE);
+    commit(
+        root,
+        SERVICE,
+        &format!("{BASE}{}", find_user("Error", "missing id")),
+    );
+    learn_delta(
+        root,
+        SERVICE,
+        &find_user("Error", "missing id"),
+        &find_user("NotFoundError", "missing id"),
+    );
+
+    // ...and a commit carries a different one, which the editor never saw.
+    commit(
+        root,
+        SERVICE,
+        &format!("{BASE}{}", find_user("Error", "no user")),
+    );
+    commit(
+        root,
+        SERVICE,
+        &format!("{BASE}{}", find_user("NotFoundError", "no user")),
+    );
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    assert!(seen(root).starts_with("2 times"), "{}", seen(root));
+}
+
+#[test]
+fn an_edit_in_a_monorepo_package_learns_a_rule_scoped_to_that_package() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    std::fs::create_dir_all(root.join("apps/api/src")).unwrap();
+    std::fs::write(root.join("apps/api/package.json"), "{}").unwrap();
+
+    learn_delta(
+        root,
+        "apps/api/src/user.service.ts",
+        &find_user("Error", "missing id"),
+        &find_user("NotFoundError", "missing id"),
+    );
+    let status = stdout(&taste(root, &["status"]));
+    assert!(status.contains("apps/api/**/*.service.ts"), "{status}");
+}
+
 #[test]
 fn learn_without_a_commit_fails_cleanly() {
     let dir = git_repo();

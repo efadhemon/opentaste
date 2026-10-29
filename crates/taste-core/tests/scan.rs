@@ -131,3 +131,172 @@ fn the_stored_tally_matches_the_scan_and_forgets_deleted_files() {
     assert_eq!(after.import_paths.right, 0);
     assert_eq!(after.import_paths.left, 9);
 }
+
+#[test]
+fn a_workspace_package_contributes_its_frameworks_to_the_stack() {
+    let project = Project::with_cache_db();
+    project.write(
+        "package.json",
+        r#"{"private":true,"workspaces":["apps/*"]}"#,
+    );
+    project.write(
+        "apps/web/package.json",
+        r#"{"dependencies":{"react":"18.0.0"}}"#,
+    );
+    project.write(
+        "apps/api/package.json",
+        r#"{"dependencies":{"@nestjs/core":"10.0.0","pg":"8.0.0"}}"#,
+    );
+    project.write("apps/api/tsconfig.json", "{}");
+
+    scan(&project.store).unwrap();
+    let stack = project
+        .store
+        .rules()
+        .unwrap()
+        .project_context
+        .detected_stack;
+    assert_eq!(stack, vec!["nestjs", "postgresql", "react", "typescript"]);
+}
+
+#[test]
+fn pnpm_workspaces_and_their_exclusions_are_read() {
+    let project = Project::with_cache_db();
+    project.write("package.json", r#"{"private":true}"#);
+    project.write(
+        "pnpm-workspace.yaml",
+        "packages:\n  - 'packages/*'\n  - \"!packages/fixtures\"\n\ncatalog:\n  react: 18.0.0\n",
+    );
+    project.write(
+        "packages/db/package.json",
+        r#"{"dependencies":{"mongoose":"8.0.0"}}"#,
+    );
+    project.write(
+        "packages/fixtures/package.json",
+        r#"{"dependencies":{"vue":"3.0.0"}}"#,
+    );
+
+    scan(&project.store).unwrap();
+    let stack = project
+        .store
+        .rules()
+        .unwrap()
+        .project_context
+        .detected_stack;
+    assert_eq!(stack, vec!["mongodb"]);
+}
+
+#[test]
+fn typescript_and_databases_are_detected_in_a_single_package() {
+    let project = Project::with_cache_db();
+    project.write(
+        "package.json",
+        r#"{"dependencies":{"@prisma/client":"5.0.0","mysql2":"3.0.0"},"devDependencies":{"typescript":"5.0.0"}}"#,
+    );
+
+    scan(&project.store).unwrap();
+    let stack = project
+        .store
+        .rules()
+        .unwrap()
+        .project_context
+        .detected_stack;
+    assert_eq!(stack, vec!["mysql", "prisma", "typescript"]);
+}
+
+#[test]
+fn a_package_outside_the_workspace_globs_is_not_read() {
+    let project = Project::with_cache_db();
+    project.write("package.json", r#"{"workspaces":{"packages":["apps/*"]}}"#);
+    project.write(
+        "tools/scripts/package.json",
+        r#"{"dependencies":{"express":"4.0.0"}}"#,
+    );
+    project.write(
+        "node_modules/react/package.json",
+        r#"{"dependencies":{"svelte":"4.0.0"}}"#,
+    );
+
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .rules()
+        .unwrap()
+        .project_context
+        .detected_stack
+        .is_empty());
+}
+
+#[test]
+fn a_deleted_file_loses_its_snapshot_on_the_next_scan() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 2, 0);
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias1.ts")
+        .unwrap()
+        .is_some());
+
+    std::fs::remove_file(project.dir.path().join("src/alias1.ts")).unwrap();
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias1.ts")
+        .unwrap()
+        .is_none());
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias0.ts")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn a_file_that_grows_past_the_size_limit_stops_counting() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    scan(&project.store).unwrap();
+    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 1);
+
+    let big = format!(
+        "import {{ a }} from \"@/lib/a\";\n{}",
+        "// padding\n".repeat(120_000)
+    );
+    project.write("src/alias0.ts", &big);
+    scan(&project.store).unwrap();
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/alias0.ts")
+        .unwrap()
+        .is_none());
+    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 0);
+}
+
+#[test]
+fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    project.write("src/main.rs", "fn main() {}\n");
+    project.write("tools/gen.py", "print('hi')\n");
+
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.files_skipped, 0);
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("src/main.rs")
+        .unwrap()
+        .is_none());
+    assert!(project
+        .store
+        .candidates()
+        .get_snapshot("tools/gen.py")
+        .unwrap()
+        .is_none());
+}

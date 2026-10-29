@@ -31,7 +31,7 @@ before it is reliable.
 | M7 | Terminal dashboard can **edit** a rule (§2 `app.rs`: "toggle, edit, delete") | Toggle, promote, delete, sync, filter. No edit. | `tui/app.rs` |
 | M8 | Dashboard shows a **syntax-highlighted** avoid/prefer diff box (§8) | Red/green colouring, no syntax highlighting | `tui/ui.rs` |
 | M9 | Scanner walks with **`ignore::WalkParallel`** and meets **<300 ms** (§1, §8) | Serial `WalkBuilder` walk; only parsing is parallel. 991 files took 321 ms in release. | `ast/scan.rs:65` |
-| M10 | `detected_stack` like `["typescript", "nestjs", "react", "postgresql"]` (§4.1) | Detects rust, python, go and some JS frameworks. Never `typescript` and never a database. Root `package.json` only. | `ast/scan.rs:255` |
+| M10 | `detected_stack` like `["typescript", "nestjs", "react", "postgresql"]` (§4.1) | Detects rust, python, go and some JS frameworks. Never `typescript` and never a database. Root `package.json` only. | `ast/scan.rs:255` **Fixed in phase 7 step 5.** |
 | M11 | `npx opentaste` runs the tool (§2, §10 phase 6) | The npm name `opentaste` belongs to an unrelated package. The wrapper is `@opentaste/cli`. **Cannot be built as written**; see section 4. | `packages/npm-opentaste` |
 
 ## 2. Built, but wrong or not working as described
@@ -40,16 +40,16 @@ before it is reliable.
 | --- | --- | --- | --- |
 | W1 | `taste learn --from-git-head` counted the same change on every run (`--amend`, cherry-pick, a manual rerun) | One correction could be pushed most of the way to a confirmed rule | Website work. **Fixed in PR #10.** |
 | W2 | `record_coding_taste` saved snippets unscrubbed into the git-tracked `rules.json` | A key pasted in chat could be committed | Website work. **Fixed in PR #10.** |
-| W3 | Demotion to a candidate below 0.50 (§5.1) can never happen. Contradictions are only checked for *active* rules (≥ 0.80), and one contradiction takes any rule below 0.80, so a rule is never contradicted a second time. | Contradicted rules stay in `rules.json` forever, inactive, instead of returning to the candidate cache | This audit |
-| W4 | Decorator anti-patterns such as `@Get()` are shorter than the 8-character contradiction needle | Rules learned from decorator swaps never decay | Phase 3 review, improvement 8 |
-| W5 | The extension learns a correction on save, and the post-commit hook may learn the same correction again from the commit | Possible double count across the two sources when AI code is committed before it is corrected | This audit; needs a reproduction |
-| W6 | §9 says a correction is a "1–15 char" edit inside the block. The extension treats *any* non-burst edit inside it as a correction. | A deviation, not necessarily a bug. Decide which is right and make the spec and the code agree. | This audit |
-| W7 | Monorepo scopes: `apps/api/src/x.service.ts` gives `apps/**/*.service.ts`, covering every app | A rule learned in one app applies to all of them | Phase 3 review, improvement 6 |
-| W8 | Re-export barrels and `export type {…}` count as named exports | Inflates the named-export ratio in barrel-heavy projects | Phase 3 review, improvement 10 |
-| W9 | Vendor key patterns need a word boundary, so a key glued to preceding text (`xxxAKIA…`) is not matched | A secret can slip past the scrubber | Phase 3 review, improvement 12 |
-| W10 | Snapshot rows for deleted files are never pruned | The cache grows; stale tallies | Phase 3 review, improvement 5 |
-| W11 | Non-script files are read, hashed, parsed and snapshotted for no counts | Wasted scan time (until M2 lands) | Phase 3 review, improvement 3 |
-| W12 | `MAX_FILE_BYTES` doc says "at or above", the code uses `>` | Doc mismatch | Phase 3 review, improvement 9 |
+| W3 | Demotion to a candidate below 0.50 (§5.1) can never happen. Contradictions are only checked for *active* rules (≥ 0.80), and one contradiction takes any rule below 0.80, so a rule is never contradicted a second time. | Contradicted rules stay in `rules.json` forever, inactive, instead of returning to the candidate cache | This audit. **Fixed in phase 7 step 1.** |
+| W4 | Decorator anti-patterns such as `@Get()` are shorter than the 8-character contradiction needle | Rules learned from decorator swaps never decay | Phase 3 review, improvement 8. **Fixed in phase 7 step 2.** |
+| W5 | The extension learns a correction on save, and the post-commit hook may learn the same correction again from the commit | Possible double count across the two sources when AI code is committed before it is corrected | This audit; needs a reproduction. **Fixed in phase 7 step 3 (reproduced: 0.45 → 0.56 for one correction).** |
+| W6 | §9 says a correction is a "1–15 char" edit inside the block. The extension treats *any* non-burst edit inside it as a correction. | A deviation, not necessarily a bug. Decide which is right and make the spec and the code agree. | This audit. **Fixed in phase 7 step 4 (no size limit; SPEC.md updated).** |
+| W7 | Monorepo scopes: `apps/api/src/x.service.ts` gives `apps/**/*.service.ts`, covering every app | A rule learned in one app applies to all of them | Phase 3 review, improvement 6. **Fixed in phase 7 step 5.** |
+| W8 | Re-export barrels and `export type {…}` count as named exports | Inflates the named-export ratio in barrel-heavy projects | Phase 3 review, improvement 10. **Fixed in phase 7 step 6.** |
+| W9 | Vendor key patterns need a word boundary, so a key glued to preceding text (`xxxAKIA…`) is not matched | A secret can slip past the scrubber | Phase 3 review, improvement 12. **Fixed in phase 7 step 7.** |
+| W10 | Snapshot rows for deleted files are never pruned | The cache grows; stale tallies | Phase 3 review, improvement 5. **Fixed in phase 7 step 8.** |
+| W11 | Non-script files are read, hashed, parsed and snapshotted for no counts | Wasted scan time (until M2 lands) | Phase 3 review, improvement 3. **Fixed in phase 7 step 8.** |
+| W12 | `MAX_FILE_BYTES` doc says "at or above", the code uses `>` | Doc mismatch | Phase 3 review, improvement 9. **Fixed in phase 7 step 8.** |
 
 ## 3. Documentation that is out of date
 
@@ -59,7 +59,7 @@ before it is reliable.
 | D2 | `SPEC.md` §2, §10 | `npx opentaste` (see M11); MCP tool called `reject_taste` in §2 and `reject_coding_taste` in §7 (the code uses the second) |
 | D3 | `SPEC.md` §3 | Dependency versions are the pre-phase-3 ones (`tree-sitter 0.24`; the workspace uses 0.27 and raised the MSRV to 1.90 for it) |
 | D4 | `SPEC.md` §5.1 | Describes demotion below 0.50 as reachable; see W3 |
-| D5 | `SPEC.md` §9 | Correction heuristic; see W6 |
+| D5 | `SPEC.md` §9 | Correction heuristic; see W6 **Fixed in phase 7 step 4.** |
 | D6 | `AGENTS.md` | The *Deferred past v0.1* table contradicts the decision above. It now points here. |
 
 ## 4. Cannot be done as written

@@ -141,6 +141,89 @@ fn contradicting_a_rule_demotes_it_back_to_a_candidate_and_only_there() {
     );
 }
 
+/// Confirm a rule from chat whose anti-pattern is a bare `Error` throw.
+fn confirm_throw_rule(project: &Project) -> String {
+    project
+        .store
+        .record_observation(
+            Observation::new(
+                RuleCategory::ErrorHandling,
+                "src/**/*.ts",
+                RuleSource::McpFeedback,
+                "Throw AppException rather than the built-in Error",
+            )
+            .with_patterns(
+                Some("throw new Error(\"missing\")".to_string()),
+                Some("throw new AppException(\"missing\")".to_string()),
+            ),
+        )
+        .unwrap()
+        .promoted()
+        .expect("chat feedback is confirmed at once")
+        .id
+        .clone()
+}
+
+/// One edit to `src/app.ts` that adds one more bare `Error` throw.
+fn contradict_once(project: &Project, throws_before: usize) -> Vec<String> {
+    let body = |n: usize| -> String {
+        (0..n)
+            .map(|i| format!("export function f{i}() {{\n  throw new Error(\"missing\");\n}}\n"))
+            .collect()
+    };
+    let ids = taste_core::contradictions(
+        &project.store,
+        std::path::Path::new("src/app.ts"),
+        &body(throws_before),
+        &body(throws_before + 1),
+    )
+    .unwrap();
+    for id in &ids {
+        project.store.apply_contradiction(id).unwrap();
+    }
+    ids
+}
+
+#[test]
+fn a_rule_that_keeps_being_contradicted_is_demoted_through_detection() {
+    let project = Project::with_cache_db();
+    let id = confirm_throw_rule(&project);
+
+    // 0.95 -> 0.71: out of the editor files, still in the rule file.
+    assert_eq!(contradict_once(&project, 0), vec![id.clone()]);
+    assert!(project.store.active_rules().unwrap().is_empty());
+    assert_eq!(
+        project.store.rules().unwrap().find(&id).unwrap().confidence,
+        0.71
+    );
+
+    // An inactive rule is still checked, so the next contradiction lands.
+    assert_eq!(contradict_once(&project, 1), vec![id.clone()]);
+    assert_eq!(
+        project.store.rules().unwrap().find(&id).unwrap().confidence,
+        0.53
+    );
+
+    // 0.40 crosses the demotion line.
+    assert_eq!(contradict_once(&project, 2), vec![id.clone()]);
+    assert!(project.store.rules().unwrap().find(&id).is_none());
+    let candidates = project.store.candidate_rules().unwrap();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].id, id);
+}
+
+#[test]
+fn a_disabled_rule_is_never_contradicted() {
+    let project = Project::with_cache_db();
+    let id = confirm_throw_rule(&project);
+    assert!(project.store.set_enabled(&id, false).unwrap());
+
+    assert!(contradict_once(&project, 0).is_empty());
+    let rule = project.store.rules().unwrap().find(&id).unwrap().clone();
+    assert_eq!(rule.confidence, 0.95);
+    assert!(!rule.enabled);
+}
+
 #[test]
 fn a_demoted_rule_can_earn_its_way_back() {
     let project = Project::with_cache_db();

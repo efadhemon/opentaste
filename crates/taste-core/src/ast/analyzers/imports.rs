@@ -31,6 +31,13 @@ pub(super) fn exports(lang: SupportedLanguage, tree: &Tree, source: &str) -> Cou
     let mut named = 0u32;
     let mut defaulted = 0u32;
     for (_, node) in run(&EXPORTS, lang, tree, source) {
+        // Re-exports (`export * from`, `export { x } from`) and type-only
+        // lists (`export type { A }`) say how a barrel is assembled, not how
+        // modules export what they define. Counting them made barrel-heavy
+        // projects look more "named" than their own code is.
+        if node.child_by_field_name("source").is_some() || is_type_only_list(node) {
+            continue;
+        }
         if has_anonymous(node, "default") {
             defaulted += 1;
         } else {
@@ -53,6 +60,16 @@ fn is_alias(path: &str) -> bool {
 
 fn is_deep_relative(path: &str) -> bool {
     path.contains("../..")
+}
+
+/// `export type { A, B }`: the `type` keyword sits directly on the export
+/// statement. In `export type A = …` it belongs to the declaration instead.
+fn is_type_only_list(node: Node<'_>) -> bool {
+    let mut cursor = node.walk();
+    let has_clause = node
+        .named_children(&mut cursor)
+        .any(|child| child.kind() == "export_clause");
+    has_clause && has_anonymous(node, "type")
 }
 
 fn has_anonymous(node: Node<'_>, kind: &str) -> bool {

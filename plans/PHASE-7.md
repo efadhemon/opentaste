@@ -1,6 +1,6 @@
 # Phase 7: Correctness of the learning pipeline
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -23,28 +23,35 @@ A confirmed rule leaves the editor files the moment it falls below 0.80, but
 again and never reaches the 0.50 demotion SPEC.md §5.1 describes. It stays in
 `rules.json` forever.
 
-- [ ] `contradictions()` checks every **enabled confirmed** rule whose scope
-      matches the file, active or not. A disabled rule is the developer's
+- [x] `contradictions()` checks every **enabled confirmed** rule whose scope
+      matches the file, active or not, through the new
+      `RuleStore::enabled_rules_for_file`. A disabled rule is the developer's
       choice and is left alone.
-- [ ] A rule that keeps being contradicted therefore decays 0.82 → 0.62 →
-      0.47 and is moved to the candidate cache by the existing
-      `apply_contradiction` path.
-- [ ] Tests: two contradicting commits demote a rule into the candidates
-      (it disappears from `rules.json` and appears in `candidate_rules`);
-      a disabled rule is never decayed; an inactive rule is not written to
-      editor files at any point in between.
+- [x] A rule that keeps being contradicted therefore decays 0.82 → 0.62 →
+      0.47 (or 0.95 → 0.71 → 0.53 → 0.40 from chat) and is moved to the
+      candidate cache by the existing `apply_contradiction` path.
+- [x] Tests in `tests/promotion_flow.rs` drive the real detection, not
+      `apply_contradiction` directly (the old tests did, which is why the
+      unreachable path went unnoticed): three contradicting edits take a
+      chat rule out of the editor files, then down, then into the candidates;
+      a disabled rule is never decayed. The first fails without the fix.
 
 ## Step 2: Decorator contradictions (W4)
 
 An anti-pattern like `@Get()` is under the 8-character needle, so rules from
 `DecoratorSwap` never decay.
 
-- [ ] When a rule's anti-pattern is a single decorator, match decorators by
+- [x] When a rule's anti-pattern is a single decorator, match decorators by
       name on the syntax tree instead of by substring: count `decorator`
-      nodes whose name equals the anti-pattern's, before and after.
-- [ ] Tests: adding `@Entity('x')` to a file contradicts a rule whose
-      anti-pattern is `@Entity()`; a decorator only mentioned in a comment or
-      string does not; an unchanged legacy decorator does not.
+      nodes whose name equals the anti-pattern's, before and after. This
+      covers every decorator anti-pattern, short or long, so `@Entity("users")`
+      is now contradicted by `@Entity("orders")` too: the preference is about
+      the decorator, not its arguments.
+- [x] Tests: adding `@Entity("orders")` contradicts a rule whose
+      anti-pattern is `@Entity()` (fails without the change); a decorator
+      only mentioned in a comment or string does not; an unchanged legacy
+      decorator does not; `@EntityRepository` does not match `@Entity`; and
+      unit tests for reading the decorator name.
 
 ## Step 3: One correction, one count, across sources (W5)
 
@@ -52,83 +59,116 @@ The extension learns a correction when the file is saved. If the AI's block
 had already been committed, the next commit carries the same correction and
 the post-commit hook learns it again.
 
-- [ ] Reproduce first, with a CLI test: `learn-delta` on a correction, then a
-      commit with the same before/after for that block, then
-      `learn --from-git-head`. Record whether the count goes up twice. If it
-      does not, write down why and close the step.
-- [ ] If it does: `learn-delta` records each observation it makes in a
-      `recent_deltas` cache table keyed by file, rule id and the scrubbed
-      preferred snippet. `learn --from-git-head` skips an observation that
-      matches an entry for the same file and removes the entry.
-- [ ] Tests: the reproduction above counts once; two *different* corrections
-      of the same kind in the same file still count twice.
+- [x] Reproduced with the debug build: a correction learned by `learn-delta`
+      (confidence 0.45, seen once), then committed, was learned again by
+      `learn --from-git-head` (0.56, seen twice). The detector extracts the
+      same snippets from the extension's block and from the committed file,
+      so the two can be matched exactly.
+- [x] `learn-delta` remembers each observation in a `pending_deltas` cache
+      table (schema version 4), keyed by file, category, instruction and
+      both snippets (`commands::delta_key`). `learn --from-git-head` skips an
+      observation whose key is there, once, and removes it. Keys older than
+      30 days are pruned. The `learn-delta` stdout contract is unchanged.
+- [x] Tests: the reproduction counts once (fails without the skip); a
+      different correction of the same kind in the same file still counts a
+      second time; a remembered key is taken at most once and stale ones are
+      pruned.
 
 ## Step 4: Settle the correction heuristic (W6)
 
 SPEC.md §9 says a correction is a "1–15 char" edit inside the AI block. The
 extension treats any edit that is not itself a burst as a correction.
 
-- [ ] Decide with evidence: replay the extension's existing tests with a
-      15-character cap and list which real corrections it would miss
-      (renaming `Error` to `NotFoundError` is 13 characters; swapping a
-      decorator line is more than 15).
-- [ ] Make SPEC.md and the code agree on the outcome, and record the reason
-      in the extension's `deltaTracker.ts` header comment.
+- [x] Decided with evidence. Measured as single editor edits, three of
+      seven realistic corrections fit a 15-character cap (one key at a time,
+      a rename to `NotFoundError` at 13, typing `Auto`) and four do not: a
+      pasted alias import path (17), a pasted `this.logger.log(` (16), a
+      "convert to arrow function" code action (41) and an
+      interface-to-type header (20). Those four are exactly the
+      transformations the detectors learn, so a cap would mostly lose real
+      corrections, while precision already comes from the detectors.
+      **Outcome: no size limit; any non-burst edit inside the block counts.**
+- [x] SPEC.md §9 now says so and gives the numbers; the reason is in the
+      `deltaTracker.ts` header comment; a new extension test pins it with a
+      41-character code-action edit.
 
 ## Step 5: Monorepo scopes and stack detection (W7, M10)
 
-- [ ] A learned scope starts at the nearest directory under the project root
+- [x] A learned scope starts at the nearest directory under the project root
       that has its own `package.json`, `Cargo.toml`, `pyproject.toml` or
-      `go.mod`: `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`.
-      Without one, behaviour is unchanged (`src/**/*.service.ts`).
-- [ ] `detected_stack` adds `typescript` when a `tsconfig.json` exists,
-      databases from dependencies (`pg`, `mysql2`, `mongodb`/`mongoose`,
-      `sqlite3`/`better-sqlite3`, `prisma`, `typeorm`, `drizzle-orm`), and reads
-      workspace packages (`workspaces` in `package.json`, and
-      `pnpm-workspace.yaml`), not only the root.
-- [ ] Tests: the monorepo scope with and without a package manifest; a
-      workspace whose framework is only in `apps/web/package.json`;
-      `typescript` and `postgresql` detected; the existing single-package
-      tests unchanged.
+      `go.mod` (`config::PACKAGE_MANIFESTS`, `Paths::package_dir`):
+      `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`. Without
+      one, behaviour is unchanged. Both learners call the new
+      `taste_core::analyze_in`; `analyze` itself stays pure and path-only.
+- [x] `detected_stack` adds `typescript` (a `tsconfig.json` or the
+      `typescript` dependency), databases (`postgresql`, `mysql`, `mongodb`,
+      `sqlite`, `prisma`, `typeorm`, `drizzle`), and reads every workspace
+      package from `workspaces` in `package.json` (array or `packages`
+      object) and the `packages:` list of `pnpm-workspace.yaml`, including
+      `!` exclusions, four levels deep, never inside `node_modules`.
+- [x] Tests: package scope with a `package.json` and with a `go.mod`; no
+      scope change without a manifest, including a folder that only looks
+      like a package; a CLI test that `learn-delta` uses it (fails if it
+      calls `analyze`); an npm workspace whose frameworks are only in
+      `apps/*/package.json`; a pnpm workspace with an exclusion;
+      `typescript`, `prisma` and `mysql` in a single package; packages
+      outside the workspace globs and inside `node_modules` ignored.
 
 ## Step 6: Barrel exports (W8)
 
-- [ ] `export * from`, `export { x } from` and `export type { … }` no longer
-      count toward named exports.
-- [ ] Tests: a barrel file contributes nothing to either side; a module with
-      real named exports and a re-export counts only the real ones.
+- [x] `export * from`, `export { x } from` (anything with a `source`) and
+      `export type { … }` no longer count toward named exports.
+      `export type X = …` and `export interface` are declarations and still
+      count.
+- [x] Cached tallies carry a format tag, now `tally2`. Without the bump, a
+      file whose snapshot was written by an older build would keep its old
+      count until it changed; with it, the next scan recounts every file.
+      Bump `TALLY_FORMAT` whenever an analyzer counts differently.
+- [x] Tests: a barrel file contributes nothing to either side; a module with
+      four declarations, a re-export, a type-only list and a default counts
+      4 named and 1 default (both fail without the change); a tally in the
+      old format is not reused.
 
 ## Step 7: Scrubber boundary (W9)
 
-- [ ] Vendor-prefix patterns (`AKIA`, `ghp_`, `sk_live_`, …) match after any
-      non-alphanumeric character or at the start, not only at a `\b`, for
-      prefixes that cannot begin an English word.
-- [ ] Tests: `xxxAKIA…` and `token=ghp_…` are redacted; the English words in
-      the existing negative fixtures still are not.
+- [x] The leading `\b` is gone for prefixes nothing in ordinary code has
+      mid-word: `AKIA`, `gh[pousr]_`, `github_pat_`, `xox?-`, `AIza`,
+      `glpat-`, `eyJ`. It stays on `ASIA` and `sk_`/`rk_`, because
+      `SOUTHEASIA…`, `task_test_…` and `desk_live_…` are real identifiers and
+      redacting them would mangle the snippet. (The regex crate has no
+      look-behind, so "after a non-alphanumeric" would have consumed that
+      character; dropping the anchor is simpler and exact.)
+- [x] Tests: `xxxAKIA…`, `MY_ghp_…`, `tokenglpat-…` and `Bearerxoxb-…` are
+      redacted (fails with the old regex); `task_test_…`, `desk_live_…` and
+      `SOUTHEASIA…` identifiers are left alone; the existing negative
+      fixtures still pass.
 
 ## Step 8: Scan hygiene (W10, W11, W12)
 
-- [ ] Snapshot rows for files the walk no longer sees are deleted at the end
-      of a scan.
-- [ ] Files in a language with no analyzers are skipped before they are read.
-      The check goes through one function, so phase 8 turns languages on in
-      one place.
-- [ ] The `MAX_FILE_BYTES` doc comment matches the `>` comparison.
-- [ ] Tests: deleting a file removes its snapshot after the next scan; a Rust
-      file is not read or snapshotted while Rust has no analyzers.
+- [x] Snapshot rows for files the walk no longer sees are deleted at the end
+      of a scan (`SqliteStore::retain_snapshots`). That includes a file that
+      grew past the size limit or stopped being UTF-8, whose old tally would
+      otherwise have kept counting.
+- [x] Files in a language with no analyzers are skipped before they are read.
+      The check is `SupportedLanguage::has_analyzers`, used by the scanner
+      and the post-commit hook; phase 8 turns a language on there.
+- [x] The `MAX_FILE_BYTES` doc comment matches the `>` comparison.
+- [x] Tests: deleting a file removes its snapshot after the next scan; a file
+      grown past the limit stops counting; Rust and Python files are not read
+      or snapshotted. All three fail without the change.
 
 ## Step 9: The full test set
 
 The complete list this phase cannot ship without. Each was written with its
 step.
 
-- [ ] Demotion through two contradictions; disabled rules untouched.
-- [ ] Decorator contradiction by name, and its three negatives.
-- [ ] Cross-source counting: once for the same correction, twice for two.
-- [ ] Monorepo scope, workspace stack, `typescript` and database detection.
-- [ ] Barrel files count nothing.
-- [ ] Glued vendor keys redacted.
-- [ ] Snapshot pruning; unsupported languages not read.
+- [x] Demotion through two contradictions; disabled rules untouched.
+- [x] Decorator contradiction by name, and its three negatives.
+- [x] Cross-source counting: once for the same correction, twice for two.
+- [x] Monorepo scope, workspace stack, `typescript` and database detection.
+- [x] Barrel files count nothing.
+- [x] Glued vendor keys redacted.
+- [x] Snapshot pruning; unsupported languages not read.
 
 ---
 
