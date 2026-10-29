@@ -13,14 +13,14 @@ and `plans/PHASE-*.md` are the executable task lists.
 ## Repository layout
 
 ```text
-crates/taste-core/   finished apart from ast/ and diff/ (phase 3)
-crates/taste-mcp/    stub: only MCP_PROTOCOL_VERSION exists (phase 4)
+crates/taste-core/   finished, including ast/ and diff/ (phase 3)
+crates/taste-mcp/    stdio MCP server, finished (phase 4)
 crates/taste-cli/    stub: main.rs prints the version (phase 5)
 packages/            does not exist yet (phase 6)
 plans/               one file per phase, with a status you keep current
 ```
 
-Current baseline on `main`: **148 tests passing**, `cargo clippy --workspace
+Current baseline on `main`: **247 tests passing**, `cargo clippy --workspace
 --all-targets -- -D warnings` clean, `cargo fmt --all --check` clean. Do not
 regress it.
 
@@ -87,7 +87,7 @@ does:
 2. **A wrong rule is worse than a missing rule**, and wrong rules are the
    failure mode untested detectors produce. They do not crash; they quietly
    degrade every AI edit in the project.
-3. **The suite is the specification.** The 148 existing tests are how phases 1
+3. **The suite is the specification.** The existing tests are how phases 1
    and 2 stay trustworthy while phases 3 to 6 are built on top of them. Each
    step you add should leave that property intact.
 
