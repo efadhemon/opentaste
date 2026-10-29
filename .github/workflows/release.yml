@@ -26,6 +26,10 @@ permissions:
   contents: read
 env:
   COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+# Every upload-artifact sets `retention-days: 1`: the artifacts only carry
+# files between jobs of one run, and a tag attaches the binaries and VSIX to
+# the GitHub release, which does not count against the account-wide Actions
+# storage quota that a full dry run once hit.
 # Every setup-node sets `package-manager-cache: false`: its automatic cache
 # needs pnpm before `corepack enable` has provided it (see ci.yml).
 jobs:
@@ -85,6 +89,7 @@ jobs:
           name: taste-${{ matrix.platform }}-${{ matrix.arch }}
           path: target/${{ matrix.target }}/release/${{ matrix.exe }}
           if-no-files-found: error
+          retention-days: 1
 
   github-release:
     needs: [versions, build, extension-package]
@@ -169,6 +174,7 @@ jobs:
           name: npm-tarballs
           path: tarballs
           if-no-files-found: error
+          retention-days: 1
 
   npm:
     needs: [versions, npm-package]
@@ -213,6 +219,7 @@ jobs:
           name: vsix
           path: packages/vscode-opentaste/*.vsix
           if-no-files-found: error
+          retention-days: 1
 
   extension-publish:
     # VS Code Marketplace for VS Code, Open VSX for Cursor and Windsurf, which
