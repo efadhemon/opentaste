@@ -1,6 +1,6 @@
 # Phase 8: Python, Rust and Go
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -40,21 +40,36 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 ## Step 1: Shared groundwork
 
-- [ ] Rule identity includes the language family for scan rules. Today a
+- [x] Rule identity includes the language family for scan rules. Today a
       guard-clause rule from TypeScript and one from Python would share an
       instruction and therefore an id; give each language its own
       instruction text and scope (`**/*.py`, `**/*.rs`, `**/*.go`).
-- [ ] File roles for scopes per language: `test_*.py` / `*_test.py`,
+      *Landed as part of phase 7's manual gate:* `rule_id` now hashes the
+      scope, so the same instruction under `**/*.py` and under the script
+      scope are two ids whatever the wording. Each language still gets its own
+      instruction text where the idiom differs (`raise`, `let … else`), and
+      always for symmetric choices, because the opposite-rule check matches on
+      instruction text across scopes. `Family::scope()` owns the four globs.
+- [x] File roles for scopes per language: `test_*.py` / `*_test.py`,
       `*_test.go`, Rust `tests/` and `#[cfg(test)]` modules, so a scope like
       `**/*_test.go` is derived the way `*.service.ts` is today.
-- [ ] Test-code exclusion: `.unwrap()` in tests and `print()` in scripts are
+      (`ast/roles.rs`; a crate's `tests/` narrows to `<crate>/tests/**/*.rs`.
+      `#[cfg(test)]` modules are inside a file, so step 3's analyzers and
+      detectors skip them rather than a scope.)
+- [x] Test-code exclusion: `.unwrap()` in tests and `print()` in scripts are
       not taste. Analyzers skip test files and test modules; Python skips
       `if __name__ == "__main__":` blocks and files under `scripts/`.
-- [ ] Contradiction skip-kinds and the scrubber's string-node kinds cover the
+      (Path-based exclusion is in `roles::is_test_or_script` and the scan
+      applies it before reading; TypeScript is unchanged. The in-file parts,
+      `__main__` blocks and `#[cfg(test)]`, belong to steps 2 and 3.)
+- [x] Contradiction skip-kinds and the scrubber's string-node kinds cover the
       three grammars (Python `string`, Rust `string_literal` / `raw_string_literal`,
-      Go `interpreted_string_literal` / `raw_string_literal`).
-- [ ] Bump `TALLY_FORMAT` once for the whole phase.
-- [ ] **Structural-similarity deduplication (M12).** SPEC.md §2 promises
+      Go `interpreted_string_literal` / `raw_string_literal`). Go's content
+      nodes (`interpreted_string_literal_content`, `raw_string_literal_content`)
+      were the missing piece.
+- [x] Bump `TALLY_FORMAT` once for the whole phase (`tally3`: counts split per
+      language family, all phase 8 dimensions present).
+- [x] **Structural-similarity deduplication (M12).** SPEC.md §2 promises
       "token-jaccard & structural similarity" deduplication; only the first
       exists. Two observations are also duplicates when their category and
       scope match and their avoid and prefer snippets have the same syntax
@@ -62,8 +77,10 @@ scan analyzer only: adding annotations is not a swap of one style for another.
       wording. More languages mean more phrasings of the same preference, so
       this lands before them. Tests: same snippets in different words merge;
       same words with different snippets do not; snippets in two languages
-      never merge.
-- [ ] Tests: rule ids differ per language for the same dimension; role
+      never merge. ("Identifiers normalised" means the ones carried through
+      both halves of the edit; the identifiers the edit changed stay verbatim,
+      or `@Entity → @AutoEntity` would merge with `@Index → @AutoIndex`.)
+- [x] Tests: rule ids differ per language for the same dimension; role
       scopes for each language; test files are excluded.
 
 ## Step 2: Python

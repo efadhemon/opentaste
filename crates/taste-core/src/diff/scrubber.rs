@@ -190,7 +190,13 @@ fn collect_string_ranges(node: Node<'_>, ranges: &mut Vec<(usize, usize)>) {
 }
 
 fn is_string_content(kind: &str) -> bool {
-    matches!(kind, "string_fragment" | "string_content")
+    matches!(
+        kind,
+        "string_fragment"
+            | "string_content"
+            | "interpreted_string_literal_content"
+            | "raw_string_literal_content"
+    )
 }
 
 fn is_string_container(kind: &str) -> bool {
@@ -555,5 +561,55 @@ mod tests {
             const sha = "sha512-abcdefghijklmnopqrstuvwxyz0123456789";
         "#;
         assert_eq!(scrub(source, SupportedLanguage::TypeScript), source);
+    }
+
+    #[test]
+    fn a_random_token_in_a_python_rust_or_go_string_is_redacted() {
+        let secret = "q8Zr2LmP0xT7vK3nW9bY";
+        let cases = [
+            (SupportedLanguage::Python, format!("value = \"{secret}\"\n")),
+            (
+                SupportedLanguage::Python,
+                format!("value = f\"{secret}{{name}}\"\n"),
+            ),
+            (
+                SupportedLanguage::Rust,
+                format!("let value = \"{secret}\";\n"),
+            ),
+            (
+                SupportedLanguage::Rust,
+                format!("let value = r#\"{secret}\"#;\n"),
+            ),
+            (
+                SupportedLanguage::Go,
+                format!("var value = \"{secret}\\n\"\n"),
+            ),
+            (SupportedLanguage::Go, format!("var value = `{secret}`\n")),
+        ];
+        for (lang, source) in cases {
+            let scrubbed = scrub(&source, lang);
+            assert!(!scrubbed.contains(secret), "{}: {scrubbed}", lang.name());
+            assert!(scrubbed.contains(REDACTED), "{}: {scrubbed}", lang.name());
+        }
+    }
+
+    #[test]
+    fn ordinary_python_rust_and_go_strings_are_not_redacted() {
+        for (lang, source) in [
+            (
+                SupportedLanguage::Python,
+                "message = \"Something went wrong\"\n",
+            ),
+            (
+                SupportedLanguage::Rust,
+                "let message = \"Something went wrong\";\n",
+            ),
+            (
+                SupportedLanguage::Go,
+                "var message = \"Something went wrong\"\n",
+            ),
+        ] {
+            assert_eq!(scrub(source, lang), source, "{}", lang.name());
+        }
     }
 }

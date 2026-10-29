@@ -27,7 +27,7 @@ use crate::models::rule_id;
 use super::analyzers::{decode_tally, encode_tally};
 use super::parser::content_hash;
 use super::promote;
-use super::{analyze_source, SupportedLanguage, Tally};
+use super::{analyze_source, is_test_or_script, SupportedLanguage, Tally};
 
 /// Files larger than this are skipped. A megabyte is far past a source file
 /// the statistical detectors can usefully read.
@@ -85,6 +85,9 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         else {
             continue;
         };
+        if is_test_or_script(Path::new(&relative_key(root, path)), lang) {
+            continue;
+        }
         let Ok(metadata) = entry.metadata() else {
             files_skipped += 1;
             continue;

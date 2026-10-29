@@ -12,7 +12,7 @@
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
-use super::Tally;
+use super::{Family, ScriptTally, Tally};
 
 /// Minimum share of occurrences the winning side must hold.
 pub const MIN_RATIO: f32 = 0.80;
@@ -39,12 +39,13 @@ pub const PREFER_CUSTOM_DECORATORS: &str =
     "Prefer project-specific decorators over framework decorators such as `@Entity` and `@Injectable`.";
 pub const PREFER_CUSTOM_ERRORS: &str = "Prefer custom error classes over throwing bare `Error`.";
 
-const SCRIPT_SCOPE: &str = "**/*.{ts,tsx,js,jsx,mjs,cjs}";
+const SCRIPT_SCOPE: &str = Family::Script.scope();
 const TYPESCRIPT_SCOPE: &str = "**/*.{ts,tsx}";
 
 /// Observations the tally is strong enough to support, in a stable order.
 pub fn observations(tally: &Tally) -> Vec<Observation> {
     let mut found = Vec::new();
+    let tally = &tally.script;
     push(&mut found, import_paths(tally));
     push(&mut found, exports(tally));
     push(&mut found, type_constructs(tally));
@@ -63,7 +64,7 @@ fn push(out: &mut Vec<Observation>, observation: Option<Observation>) {
     }
 }
 
-fn import_paths(tally: &Tally) -> Option<Observation> {
+fn import_paths(tally: &ScriptTally) -> Option<Observation> {
     let (left_wins, ratio) = choose(tally.import_paths, true)?;
     let instruction = if left_wins {
         PREFER_PATH_ALIASES
@@ -78,7 +79,7 @@ fn import_paths(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn exports(tally: &Tally) -> Option<Observation> {
+fn exports(tally: &ScriptTally) -> Option<Observation> {
     let (left_wins, ratio) = choose(tally.exports, true)?;
     let instruction = if left_wins {
         PREFER_NAMED_EXPORTS
@@ -93,7 +94,7 @@ fn exports(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn type_constructs(tally: &Tally) -> Option<Observation> {
+fn type_constructs(tally: &ScriptTally) -> Option<Observation> {
     let (left_wins, ratio) = choose(tally.type_constructs, true)?;
     let instruction = if left_wins {
         PREFER_INTERFACE
@@ -108,7 +109,7 @@ fn type_constructs(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn function_syntax(tally: &Tally) -> Option<Observation> {
+fn function_syntax(tally: &ScriptTally) -> Option<Observation> {
     let (left_wins, ratio) = choose(tally.function_syntax, true)?;
     let instruction = if left_wins {
         PREFER_FUNCTION_DECLARATIONS
@@ -123,7 +124,7 @@ fn function_syntax(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn control_flow(tally: &Tally) -> Option<Observation> {
+fn control_flow(tally: &ScriptTally) -> Option<Observation> {
     let (_left_wins, ratio) = choose(tally.control_flow, false)?;
     Some(observed(
         RuleCategory::CodeStyle,
@@ -133,7 +134,7 @@ fn control_flow(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn decorators(tally: &Tally) -> Option<Observation> {
+fn decorators(tally: &ScriptTally) -> Option<Observation> {
     let (_left_wins, ratio) = choose(tally.decorators, false)?;
     Some(observed(
         RuleCategory::Architecture,
@@ -143,7 +144,7 @@ fn decorators(tally: &Tally) -> Option<Observation> {
     ))
 }
 
-fn errors(tally: &Tally) -> Option<Observation> {
+fn errors(tally: &ScriptTally) -> Option<Observation> {
     let (_left_wins, ratio) = choose(tally.errors, false)?;
     Some(observed(
         RuleCategory::ErrorHandling,
@@ -205,7 +206,7 @@ pub fn opposite_instruction(instruction: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Count, Tally};
+    use crate::ast::{Count, ScriptTally, Tally};
 
     fn files(left: u32, right: u32, n: u32) -> Count {
         Count {
@@ -218,7 +219,10 @@ mod tests {
     #[test]
     fn a_nine_of_ten_import_ratio_promotes_and_six_of_ten_does_not() {
         let strong = Tally {
-            import_paths: files(9, 1, 10),
+            script: ScriptTally {
+                import_paths: files(9, 1, 10),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         let promoted = observations(&strong);
@@ -228,7 +232,10 @@ mod tests {
         assert_eq!(promoted[0].source, RuleSource::AstScan);
 
         let weak = Tally {
-            import_paths: files(6, 4, 10),
+            script: ScriptTally {
+                import_paths: files(6, 4, 10),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         assert!(observations(&weak).is_empty());
@@ -237,7 +244,10 @@ mod tests {
     #[test]
     fn nine_files_do_not_clear_the_support_floor() {
         let tally = Tally {
-            import_paths: files(9, 0, 9),
+            script: ScriptTally {
+                import_paths: files(9, 0, 9),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         assert!(observations(&tally).is_empty());
@@ -246,7 +256,10 @@ mod tests {
     #[test]
     fn an_even_split_promotes_nothing() {
         let tally = Tally {
-            type_constructs: files(10, 10, 20),
+            script: ScriptTally {
+                type_constructs: files(10, 10, 20),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         assert!(observations(&tally).is_empty());
@@ -255,18 +268,42 @@ mod tests {
     #[test]
     fn guard_clauses_promote_only_when_guards_dominate() {
         let guards = Tally {
-            control_flow: files(9, 1, 10),
+            script: ScriptTally {
+                control_flow: files(9, 1, 10),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         assert_eq!(observations(&guards)[0].instruction, PREFER_GUARD_CLAUSES);
 
         let nested = Tally {
-            control_flow: files(1, 9, 10),
+            script: ScriptTally {
+                control_flow: files(1, 9, 10),
+                ..ScriptTally::default()
+            },
             ..Tally::default()
         };
         assert!(
             observations(&nested).is_empty(),
             "a nested-if majority is not a taste to impose"
         );
+    }
+
+    #[test]
+    fn the_same_dimension_in_two_languages_gets_two_rule_ids() {
+        let ids: Vec<_> = Family::ALL
+            .iter()
+            .map(|family| {
+                crate::models::rule_id(
+                    RuleCategory::CodeStyle,
+                    family.scope(),
+                    PREFER_GUARD_CLAUSES,
+                )
+            })
+            .collect();
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), Family::ALL.len(), "{ids:?}");
     }
 }

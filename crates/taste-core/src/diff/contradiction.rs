@@ -328,4 +328,35 @@ mod tests {
         let ids = contradictions(&store, Path::new("src/old.ts"), before, after).unwrap();
         assert_eq!(ids.len(), 1, "{ids:?}");
     }
+
+    #[test]
+    fn python_rust_and_go_anti_patterns_count_in_code_but_not_in_comments_or_strings() {
+        let cases = [
+            (
+                "src/app/users.py",
+                "print(\"loaded\")",
+                "def load():\n    print(\"loaded\")\n",
+                "# print(\"loaded\")\nnote = 'print(\"loaded\")'\n",
+            ),
+            (
+                "src/users.rs",
+                "config.unwrap()",
+                "fn load() { config.unwrap(); }\n",
+                "// config.unwrap()\n/* config.unwrap() */\nconst NOTE: &str = \"config.unwrap()\";\n",
+            ),
+            (
+                "pkg/users.go",
+                "fmt.Println(\"loaded\")",
+                "package users\nfunc load() { fmt.Println(\"loaded\") }\n",
+                "package users\n// fmt.Println(\"loaded\")\nvar note = `fmt.Println(\"loaded\")`\n",
+            ),
+        ];
+        for (path, anti, in_code, in_comments) in cases {
+            let (_dir, store) = store_with(anti, "**/*");
+            let hit = contradictions(&store, Path::new(path), "", in_code).unwrap();
+            assert_eq!(hit.len(), 1, "{path}: {hit:?}");
+            let miss = contradictions(&store, Path::new(path), "", in_comments).unwrap();
+            assert!(miss.is_empty(), "{path}: {miss:?}");
+        }
+    }
 }

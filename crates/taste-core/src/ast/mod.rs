@@ -7,11 +7,14 @@ mod analyzers;
 mod parser;
 mod promote;
 mod query;
+mod roles;
 mod scan;
 
-pub use analyzers::{analyze_source, Count, Dimension, Tally};
+pub use analyzers::{
+    analyze_source, Count, Dimension, GoTally, PythonTally, RustTally, ScriptTally, Tally,
+};
 pub(crate) use analyzers::{decorator_name, is_custom_error, is_framework_decorator};
-pub use parser::{content_hash, parse, SupportedLanguage};
+pub use parser::{content_hash, parse, Family, SupportedLanguage};
 pub use promote::{
     observations, opposite_instruction, MIN_FILES, MIN_RATIO, PREFER_ARROW_FUNCTIONS,
     PREFER_CUSTOM_DECORATORS, PREFER_CUSTOM_ERRORS, PREFER_DEEP_RELATIVE, PREFER_DEFAULT_EXPORTS,
@@ -21,4 +24,6 @@ pub use promote::{
 pub(crate) use query::{
     import_locals, is_package_specifier, matches, node_text, unquote, ScriptQuery,
 };
+pub use roles::is_test_or_script;
+pub(crate) use roles::test_file_pattern;
 pub use scan::{scan, stored_tally, ScanReport};

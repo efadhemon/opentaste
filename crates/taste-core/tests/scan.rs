@@ -116,7 +116,7 @@ fn vendored_built_and_declaration_files_are_never_scanned() {
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1, "{report:?}");
-    assert_eq!(report.tallies.exports.files, 1);
+    assert_eq!(report.tallies.script.exports.files, 1);
 }
 
 #[test]
@@ -128,8 +128,8 @@ fn the_stored_tally_matches_the_scan_and_forgets_deleted_files() {
 
     std::fs::remove_file(project.paths.project_root.join("src/relative0.ts")).unwrap();
     let after = stored_tally(&project.store).unwrap();
-    assert_eq!(after.import_paths.right, 0);
-    assert_eq!(after.import_paths.left, 9);
+    assert_eq!(after.script.import_paths.right, 0);
+    assert_eq!(after.script.import_paths.left, 9);
 }
 
 #[test]
@@ -260,7 +260,14 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
     scan(&project.store).unwrap();
-    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 1);
+    assert_eq!(
+        stored_tally(&project.store)
+            .unwrap()
+            .script
+            .import_paths
+            .left,
+        1
+    );
 
     let big = format!(
         "import {{ a }} from \"@/lib/a\";\n{}",
@@ -274,7 +281,14 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
         .get_snapshot("src/alias0.ts")
         .unwrap()
         .is_none());
-    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 0);
+    assert_eq!(
+        stored_tally(&project.store)
+            .unwrap()
+            .script
+            .import_paths
+            .left,
+        0
+    );
 }
 
 #[test]

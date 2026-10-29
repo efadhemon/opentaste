@@ -471,19 +471,20 @@ impl RuleStore {
             .list_candidates_in(observation.category)?
             .into_iter()
             .find(|candidate| {
-                dedup::is_duplicate(
-                    candidate.category,
-                    &candidate.scope,
-                    &candidate.instruction,
-                    observation.category,
-                    &observation.scope,
-                    &observation.instruction,
+                dedup::is_same_pattern(
+                    dedup::Pattern {
+                        category: candidate.category,
+                        scope: &candidate.scope,
+                        instruction: &candidate.instruction,
+                        anti_pattern: candidate.anti_pattern.as_deref(),
+                        preferred_pattern: candidate.preferred_pattern.as_deref(),
+                    },
+                    observed_pattern(observation),
                 )
             }))
     }
 }
 
-/// Find a confirmed rule describing the same preference as `observation`.
 /// A confirmed rule that says the opposite of `observation`, for the
 /// symmetric choices the analyzers know both sides of.
 ///
@@ -504,6 +505,17 @@ fn find_opposite_rule(rules: &RulesFile, observation: &Observation) -> Option<St
         .map(|rule| rule.id.clone())
 }
 
+fn observed_pattern(observation: &Observation) -> dedup::Pattern<'_> {
+    dedup::Pattern {
+        category: observation.category,
+        scope: &observation.scope,
+        instruction: &observation.instruction,
+        anti_pattern: observation.anti_pattern.as_deref(),
+        preferred_pattern: observation.preferred_pattern.as_deref(),
+    }
+}
+
+/// Find a confirmed rule describing the same preference as `observation`.
 fn find_matching_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
     let expected_id = rule_id(
         observation.category,
@@ -517,13 +529,15 @@ fn find_matching_rule(rules: &RulesFile, observation: &Observation) -> Option<St
         .rules
         .iter()
         .find(|rule| {
-            dedup::is_duplicate(
-                rule.category,
-                &rule.scope,
-                &rule.instruction,
-                observation.category,
-                &observation.scope,
-                &observation.instruction,
+            dedup::is_same_pattern(
+                dedup::Pattern {
+                    category: rule.category,
+                    scope: &rule.scope,
+                    instruction: &rule.instruction,
+                    anti_pattern: rule.anti_pattern.as_deref(),
+                    preferred_pattern: rule.preferred_pattern.as_deref(),
+                },
+                observed_pattern(observation),
             )
         })
         .map(|rule| rule.id.clone())
