@@ -41,12 +41,17 @@ again and never reaches the 0.50 demotion SPEC.md §5.1 describes. It stays in
 An anti-pattern like `@Get()` is under the 8-character needle, so rules from
 `DecoratorSwap` never decay.
 
-- [ ] When a rule's anti-pattern is a single decorator, match decorators by
+- [x] When a rule's anti-pattern is a single decorator, match decorators by
       name on the syntax tree instead of by substring: count `decorator`
-      nodes whose name equals the anti-pattern's, before and after.
-- [ ] Tests: adding `@Entity('x')` to a file contradicts a rule whose
-      anti-pattern is `@Entity()`; a decorator only mentioned in a comment or
-      string does not; an unchanged legacy decorator does not.
+      nodes whose name equals the anti-pattern's, before and after. This
+      covers every decorator anti-pattern, short or long, so `@Entity("users")`
+      is now contradicted by `@Entity("orders")` too: the preference is about
+      the decorator, not its arguments.
+- [x] Tests: adding `@Entity("orders")` contradicts a rule whose
+      anti-pattern is `@Entity()` (fails without the change); a decorator
+      only mentioned in a comment or string does not; an unchanged legacy
+      decorator does not; `@EntityRepository` does not match `@Entity`; and
+      unit tests for reading the decorator name.
 
 ## Step 3: One correction, one count, across sources (W5)
 

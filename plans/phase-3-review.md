@@ -307,6 +307,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
    anti-pattern like `@Get()` is shorter than `MIN_NEEDLE` (8), so it can never
    contradict. That is safe, but rules from `DecoratorSwap` will rarely decay.
    Once B2 is fixed, match decorators by name structurally instead.
+   **Status: done** in phase 7 step 2.
 9. **Doc mismatch.** `MAX_FILE_BYTES` says files "at or above" the size are
    skipped, but the code uses `>`.
 10. **Exports counting.** Re-export barrels (`export * from`, `export { x } from`)
