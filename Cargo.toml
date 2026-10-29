@@ -14,7 +14,7 @@ edition = "2021"
 rust-version = "1.90"
 license = "MIT"
 authors = ["OpenTaste Contributors"]
-repository = "https://github.com/opentaste/opentaste"
+repository = "https://github.com/efadhemon/opentaste"
 
 [workspace.dependencies]
 taste-core = { path = "crates/taste-core", version = "0.1.0" }

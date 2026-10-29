@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json",
+  "title": "OpenTaste rule file",
+  "description": "The git-tracked .taste/rules.json written by OpenTaste. Edit it with `taste`, not by hand.",
+  "type": "object",
+  "required": ["$schema", "version", "project_context", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "string" },
+    "project_context": {
+      "type": "object",
+      "required": ["detected_stack", "total_files_scanned", "last_updated"],
+      "additionalProperties": false,
+      "properties": {
+        "detected_stack": { "type": "array", "items": { "type": "string" } },
+        "total_files_scanned": { "type": "integer", "minimum": 0 },
+        "last_updated": { "type": "string", "format": "date-time" }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "scope",
+        "confidence",
+        "occurrences",
+        "enabled",
+        "source",
+        "instruction",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "category": {
+          "enum": [
+            "architecture",
+            "code-style",
+            "imports",
+            "types",
+            "error-handling",
+            "naming",
+            "testing"
+          ]
+        },
+        "scope": { "type": "string", "description": "Glob of the files the rule applies to." },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "occurrences": { "type": "integer", "minimum": 0 },
+        "enabled": { "type": "boolean" },
+        "source": { "enum": ["ast-scan", "ast-diff", "mcp-feedback", "manual"] },
+        "instruction": { "type": "string" },
+        "anti_pattern": { "type": "string" },
+        "preferred_pattern": { "type": "string" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

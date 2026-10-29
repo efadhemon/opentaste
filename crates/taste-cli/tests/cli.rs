@@ -416,7 +416,7 @@ fn learn_from_git_head_decays_a_rule_whose_anti_pattern_the_commit_added() {
         "export function a() {\n  return 1;\n}\n",
     );
     let rules = serde_json::json!({
-        "$schema": "https://opentaste.dev/schema/v1.json",
+        "$schema": "https://raw.githubusercontent.com/efadhemon/opentaste/main/schema/v1.json",
         "version": "1.0.0",
         "project_context": { "detected_stack": [], "total_files_scanned": 0, "last_updated": "2026-10-29T00:00:00Z" },
         "rules": [{
