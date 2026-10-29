@@ -1,0 +1,116 @@
+//! `taste learn --from-git-head`: what the post-commit hook runs.
+//!
+//! Diffs `HEAD` against its parent (or against nothing, for the first
+//! commit), learns from each changed script file, and decays any rule whose
+//! anti-pattern the commit added. Walking further back through history is out
+//! of scope for v0.1: a wrong detector would be multiplied across every commit
+//! ever made.
+
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+use taste_core::{contradictions, RuleStore, SupportedLanguage};
+
+use crate::commands::{describe_outcome, sync};
+use crate::git;
+use crate::output::Output;
+
+/// Larger files are skipped, as the scanner skips them.
+const MAX_FILE_BYTES: usize = 1024 * 1024;
+
+pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
+    let root = store.paths().project_root.clone();
+    if git::text(&root, &["rev-parse", "--verify", "-q", "HEAD"]).is_none() {
+        anyhow::bail!("no commit to learn from: {} has no HEAD", root.display());
+    }
+    let has_parent = git::text(&root, &["rev-parse", "--verify", "-q", "HEAD~1"]).is_some();
+
+    let mut learned = 0usize;
+    let mut promoted = false;
+    let mut contradicted = BTreeSet::new();
+    for (path, added) in changed_files(&root) {
+        if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::is_script) {
+            continue;
+        }
+        let before = if added || !has_parent {
+            Some(String::new())
+        } else {
+            show(&root, "HEAD~1", &path)
+        };
+        let (Some(before), Some(after)) = (before, show(&root, "HEAD", &path)) else {
+            continue;
+        };
+        for observation in taste_core::analyze(&before, &after, &path)? {
+            let outcome = store.record_observation(observation)?;
+            promoted |= outcome.promoted().is_some();
+            learned += 1;
+            out.say(format!("  {}", describe_outcome(&outcome)));
+        }
+        contradicted.extend(contradictions(store, &path, &before, &after)?);
+    }
+    for id in &contradicted {
+        if store.apply_contradiction(id)? {
+            out.say(format!(
+                "  decayed    {id}: this commit added its anti-pattern"
+            ));
+        }
+    }
+    if learned == 0 && contradicted.is_empty() {
+        out.say("Nothing to learn from HEAD.");
+    }
+    if promoted || !contradicted.is_empty() {
+        let report = store.sync()?;
+        sync::report_sync(&report, store, out);
+    }
+    Ok(())
+}
+
+/// Files `HEAD` added or modified, relative to the project root, with whether
+/// each was added. Deletions teach nothing. Merge commits list nothing.
+fn changed_files(root: &Path) -> Vec<(PathBuf, bool)> {
+    let Some(raw) = git::output(
+        root,
+        &[
+            "diff-tree",
+            "-r",
+            "-z",
+            "--no-commit-id",
+            "--name-status",
+            "--no-renames",
+            "--relative",
+            "--root",
+            "HEAD",
+        ],
+    ) else {
+        return Vec::new();
+    };
+    let fields: Vec<&[u8]> = raw
+        .split(|byte| *byte == 0)
+        .filter(|f| !f.is_empty())
+        .collect();
+    fields
+        .chunks(2)
+        .filter_map(|pair| {
+            let [status, path] = pair else {
+                return None;
+            };
+            let added = match status.first() {
+                Some(b'A') => true,
+                Some(b'M') => false,
+                _ => return None,
+            };
+            let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
+            Some((path, added))
+        })
+        .collect()
+}
+
+/// The contents of `path` at `revision`, when it is UTF-8 and not huge.
+fn show(root: &Path, revision: &str, path: &Path) -> Option<String> {
+    let spec = format!("{revision}:./{}", path.to_string_lossy().replace('\\', "/"));
+    let bytes = git::output(root, &["show", &spec])?;
+    if bytes.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}

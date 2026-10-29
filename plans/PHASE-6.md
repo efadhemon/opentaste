@@ -67,7 +67,11 @@ that range within 180 seconds, followed by a save, trigger `taste learn-delta`.
   `AGENTS.md`, `.github/copilot-instructions.md` and the `.cursor/rules/*.mdc`
   files all change during `sync`. Filter to source files and exclude the
   transpiler's targets explicitly — the same list `config::Paths` owns, not a
-  second hardcoded copy that will drift.
+  second hardcoded copy that will drift. Phase 5 put that list in core as
+  `Paths::marker_targets` and `Paths::is_generated_target` (marker files plus
+  `.cursor/rules/opentaste-*.mdc`), but the binary does not print it yet. Add
+  a small `taste targets --json` reading those two, rather than copying the
+  paths into TypeScript.
 - **Window line ranges drift.** An edit *above* an open burst window shifts the
   tracked range downward or upward. Adjust `startLine` and `endLine` on every
   intervening change, or the captured "after" text will be a completely
@@ -81,6 +85,10 @@ that range within 180 seconds, followed by a save, trigger `taste learn-delta`.
       `{ "before": …, "after": … }` to stdin and parsing the response from
       stdout. **This is the contract fixed in [Phase 5](PHASE-5.md) step 3** —
       `{ promoted: TasteRule[], candidates: {…}[] }`, both always present.
+      Each `promoted` entry is a `TasteRule` exactly as in `rules.json`, so
+      `anti_pattern` and `preferred_pattern` are absent when the rule has
+      none; type them as optional. Each `candidates` entry is exactly
+      `{ id, confidence, instruction }`.
 - [ ] Tolerate an empty stdout with a non-zero exit code: that is how the binary
       reports failure, and it must be silent rather than a popup.
 - [ ] Pass `--file` as a path relative to the workspace folder, and spawn the

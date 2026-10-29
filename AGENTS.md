@@ -15,12 +15,12 @@ and `plans/PHASE-*.md` are the executable task lists.
 ```text
 crates/taste-core/   finished, including ast/ and diff/ (phase 3)
 crates/taste-mcp/    stdio MCP server, finished (phase 4)
-crates/taste-cli/    stub: main.rs prints the version (phase 5)
+crates/taste-cli/    the `taste` binary and dashboard, finished (phase 5)
 packages/            does not exist yet (phase 6)
 plans/               one file per phase, with a status you keep current
 ```
 
-Current baseline on `main`: **247 tests passing**, `cargo clippy --workspace
+Current baseline on `main`: **301 tests passing**, `cargo clippy --workspace
 --all-targets -- -D warnings` clean, `cargo fmt --all --check` clean. Do not
 regress it.
 
