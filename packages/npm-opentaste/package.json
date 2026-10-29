@@ -1,0 +1,26 @@
+{
+  "name": "@opentaste/cli",
+  "version": "0.1.0",
+  "description": "The OpenTaste `taste` CLI and MCP server, as a prebuilt binary for your platform.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/efadhemon/opentaste"
+  },
+  "bin": {
+    "taste": "bin/taste.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node -e \"\"",
+    "typecheck": "node --check bin/taste.js && node --check lib/platform.js && node --check scripts/platform-package.js",
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}

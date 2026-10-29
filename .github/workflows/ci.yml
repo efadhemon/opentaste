@@ -27,3 +27,36 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.90
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets
+  node:
+    # The TypeScript packages: the editor extension and the npm wrapper.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24 }
+      # pnpm comes from the `packageManager` field through Corepack.
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run typecheck
+      - run: pnpm -r run test
+      # One leg also runs the extension against a freshly built `taste`, so
+      # the Rust and TypeScript sides of the learn-delta contract cannot drift.
+      - if: matrix.os == 'ubuntu-latest'
+        uses: dtolnay/rust-toolchain@stable
+      - if: matrix.os == 'ubuntu-latest'
+        uses: Swatinem/rust-cache@v2
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo build -p taste-cli
+      - if: matrix.os == 'ubuntu-latest'
+        working-directory: packages/vscode-opentaste
+        run: node --test "out/test/endToEnd.test.js"
+        env:
+          TASTE_BIN: ${{ github.workspace }}/target/debug/taste
+      # Proves the extension still packages; the .vsix is not kept.
+      - run: pnpm --filter opentaste run package

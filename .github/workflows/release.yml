@@ -1,0 +1,175 @@
+name: Release
+# Tags only, and separate from CI. Push `vX.Y.Z` after bumping every version
+# (the workspace Cargo.toml and both package.json files) to the same X.Y.Z.
+#
+# Secrets, all in the `release` environment:
+#   NPM_TOKEN   an npm automation token that can publish the @opentaste scope
+#   VSCE_PAT    an Azure DevOps token for the VS Code Marketplace publisher
+#   OVSX_PAT    an Open VSX token for the same publisher namespace
+"on":
+  push:
+    tags: ["v*"]
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: check
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          cargo=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          ext=$(node -p "require('./packages/vscode-opentaste/package.json').version")
+          npm=$(node -p "require('./packages/npm-opentaste/package.json').version")
+          echo "tag=$tag cargo=$cargo extension=$ext npm=$npm"
+          for v in "$cargo" "$ext" "$npm"; do
+            if [ "$v" != "$tag" ]; then
+              echo "::error::version $v does not match tag $tag"; exit 1
+            fi
+          done
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: versions
+    # Native runners only. rusqlite bundles SQLite and compiles it from C, so
+    # cross-compiling would need a full cross C toolchain per target.
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-24.04, platform: linux, arch: x64, exe: taste }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-24.04-arm, platform: linux, arch: arm64, exe: taste }
+          - { target: x86_64-apple-darwin, os: macos-15-intel, platform: darwin, arch: x64, exe: taste }
+          - { target: aarch64-apple-darwin, os: macos-14, platform: darwin, arch: arm64, exe: taste }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, platform: win32, arch: x64, exe: taste.exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: "${{ matrix.target }}" }
+      - run: cargo build --release --locked -p taste-cli --target ${{ matrix.target }}
+      - name: Smoke test
+        shell: bash
+        run: ./target/${{ matrix.target }}/release/${{ matrix.exe }} --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: taste-${{ matrix.platform }}-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/${{ matrix.exe }}
+          if-no-files-found: error
+
+  github-release:
+    needs: [versions, build, extension-package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Name the binaries by platform
+        shell: bash
+        run: |
+          mkdir -p release
+          for dir in artifacts/taste-*; do
+            name=$(basename "$dir")
+            for file in "$dir"/*; do
+              case "$file" in
+                *.exe) cp "$file" "release/$name.exe" ;;
+                *) cp "$file" "release/$name" ;;
+              esac
+            done
+          done
+          cp artifacts/vsix/*.vsix release/
+          ls -l release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true
+
+  npm:
+    needs: [versions, build]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, pattern: "taste-*" }
+      - name: Publish one package per platform
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.versions.outputs.version }}
+        run: |
+          for dir in artifacts/taste-*; do
+            pair="${dir#artifacts/taste-}"
+            platform="${pair%-*}"
+            arch="${pair##*-}"
+            binary=$(ls "$dir"/*)
+            out="npm/$pair"
+            node packages/npm-opentaste/scripts/platform-package.js platform "$platform" "$arch" "$binary" "$out" "$VERSION"
+            npm publish "$out" --access public --provenance
+          done
+      - name: Publish the wrapper
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.versions.outputs.version }}
+        run: |
+          node packages/npm-opentaste/scripts/platform-package.js wrapper packages/npm-opentaste "$VERSION"
+          npm publish packages/npm-opentaste --access public --provenance
+
+  extension-package:
+    needs: versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24 }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run test
+      - run: pnpm --filter opentaste run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: packages/vscode-opentaste/*.vsix
+          if-no-files-found: error
+
+  extension-publish:
+    # VS Code Marketplace for VS Code, Open VSX for Cursor and Windsurf, which
+    # can only install from there.
+    needs: [versions, extension-package]
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24 }
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with: { name: vsix, path: vsix }
+      - name: VS Code Marketplace
+        working-directory: packages/vscode-opentaste
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm exec vsce publish --packagePath ../../vsix/*.vsix
+      - name: Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: pnpm dlx ovsx@1.3.0 publish vsix/*.vsix --pat "$OVSX_PAT"

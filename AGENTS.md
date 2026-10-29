@@ -16,11 +16,12 @@ and `plans/PHASE-*.md` are the executable task lists.
 crates/taste-core/   finished, including ast/ and diff/ (phase 3)
 crates/taste-mcp/    stdio MCP server, finished (phase 4)
 crates/taste-cli/    the `taste` binary and dashboard, finished (phase 5)
-packages/            does not exist yet (phase 6)
+packages/            VS Code extension and the @opentaste/cli npm wrapper (phase 6)
 plans/               one file per phase, with a status you keep current
 ```
 
-Current baseline on `main`: **301 tests passing**, `cargo clippy --workspace
+Current baseline on `main`: **303 Rust tests and 39 TypeScript tests passing**
+(`pnpm -r run test`), `cargo clippy --workspace
 --all-targets -- -D warnings` clean, `cargo fmt --all --check` clean. Do not
 regress it.
 
@@ -156,6 +157,7 @@ builds a weak version of one by accident.
 | Mining *recent git history* for patterns | SPEC.md section 1 | Phase 5's `taste learn --from-git-head` covers the last commit only, which is what the `post-commit` hook needs. Walking back through history multiplies the cost of a wrong detector across every commit ever made. |
 | Strict-null-check and zod-schema detection | SPEC.md section 2 (`types.rs`) | Strict null checking is a `tsconfig.json` setting, not a per-file statistical signal. Zod detection is plausible but was not worth a detector in the first release. |
 | Dependency-injection pattern detection | SPEC.md section 2 (`arch.rs`) | DI shape varies too much between frameworks to count reliably, and an unreliable count becomes a wrong rule. |
+| A `taste` binary bundled in the extension | [plans/PHASE-6.md](plans/PHASE-6.md) step 3 | The extension finds `taste` from its setting, the workspace's `node_modules/.bin`, then `PATH`. Bundling means one VSIX per platform (`vsce package --target`); downloading one at run time would be the network call the npm wrapper refuses to make. |
 | Control-flow flattening detector | SPEC.md section 5.2, item 5 | Planned last in [plans/PHASE-3.md](plans/PHASE-3.md) and explicitly droppable. It needs real tree-shape comparison and is the detector most likely to be confidently wrong. |
 
 If you implement one, move the row out of this table and into the relevant plan
@@ -199,6 +201,9 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo insta review   # after changing transpiler output
+corepack enable && pnpm install --frozen-lockfile
+pnpm -r run typecheck
+pnpm -r run test     # TASTE_BIN=target/debug/taste also runs the end-to-end test
 ```
 
 The toolchain floor is declared as `rust-version = "1.90"` in the workspace

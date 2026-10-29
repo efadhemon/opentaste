@@ -7,6 +7,8 @@ pub mod mcp;
 pub mod scan;
 pub mod status;
 pub mod sync;
+pub mod targets;
+pub mod toggle;
 pub mod watch;
 
 use taste_core::Outcome;
