@@ -316,6 +316,7 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
     and `export type {…}` count as named exports. That is defensible, but it
     inflates the "named" side in barrel-heavy projects. Consider excluding
     re-exports.
+    **Status: done** in phase 7 step 6.
 11. **Test gaps worth adding with the fixes:** a scrubber case per secret shape
     in B1; negative fixtures for `@Get`→`@Post` and `Error`→`NotFoundException`;
     a scan test with a `node_modules` directory and no `.gitignore`; a

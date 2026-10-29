@@ -116,10 +116,18 @@ extension treats any edit that is not itself a burst as a correction.
 
 ## Step 6: Barrel exports (W8)
 
-- [ ] `export * from`, `export { x } from` and `export type { … }` no longer
-      count toward named exports.
-- [ ] Tests: a barrel file contributes nothing to either side; a module with
-      real named exports and a re-export counts only the real ones.
+- [x] `export * from`, `export { x } from` (anything with a `source`) and
+      `export type { … }` no longer count toward named exports.
+      `export type X = …` and `export interface` are declarations and still
+      count.
+- [x] Cached tallies carry a format tag, now `tally2`. Without the bump, a
+      file whose snapshot was written by an older build would keep its old
+      count until it changed; with it, the next scan recounts every file.
+      Bump `TALLY_FORMAT` whenever an analyzer counts differently.
+- [x] Tests: a barrel file contributes nothing to either side; a module with
+      four declarations, a re-export, a type-only list and a default counts
+      4 named and 1 default (both fail without the change); a tally in the
+      old format is not reused.
 
 ## Step 7: Scrubber boundary (W9)
 
