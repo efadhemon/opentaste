@@ -7,6 +7,12 @@ decisions and hazards that only became visible once phases 1 and 2 were built.
 Phases 1 and 2 are complete: 148 tests passing, `cargo clippy --workspace
 --all-targets -- -D warnings` clean.
 
+This file is the reasoning. The executable task lists, each carrying its own
+status, live in `plans/`: [PHASE-3.md](plans/PHASE-3.md) (which also contains
+phase 0), [PHASE-4.md](plans/PHASE-4.md), [PHASE-5.md](plans/PHASE-5.md) and
+[PHASE-6.md](plans/PHASE-6.md). [AGENTS.md](AGENTS.md) describes how to work
+through them and how the phases depend on one another.
+
 ---
 
 ## What already exists
