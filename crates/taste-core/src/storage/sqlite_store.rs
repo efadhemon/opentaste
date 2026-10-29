@@ -15,7 +15,7 @@ use crate::models::{round2, CandidateRule, RuleCategory, RuleSource};
 use crate::storage::atomic::ensure_parent_dir;
 
 /// Schema version this build expects; bumped whenever a migration is added.
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 /// A recorded AST fingerprint for one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +108,21 @@ impl SqliteStore {
                 CREATE TABLE IF NOT EXISTS rejected_rules (
                     id TEXT PRIMARY KEY,
                     rejected_at TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+
+        if current < 3 {
+            // Changes `taste learn --from-git-head` has already learned from.
+            // The post-commit hook fires again on `git commit --amend`, a
+            // cherry-pick or a rebuilt branch, and the command can also be run
+            // by hand; without this, one correction would count once per run.
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS learned_changes (
+                    fingerprint TEXT PRIMARY KEY,
+                    learned_at TEXT NOT NULL
                 );
                 "#,
             )?;
@@ -229,6 +244,28 @@ impl SqliteStore {
             )
             .optional()?;
         Ok(found.is_some())
+    }
+
+    /// Whether the change with this fingerprint has already been learned from.
+    pub fn is_learned(&self, fingerprint: &str) -> Result<bool> {
+        let found: Option<i32> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM learned_changes WHERE fingerprint = ?1",
+                params![fingerprint],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    /// Remember that the change with this fingerprint has been learned from.
+    pub fn mark_learned(&self, fingerprint: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO learned_changes (fingerprint, learned_at) VALUES (?1, ?2)",
+            params![fingerprint, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 
     /// Number of stored candidates.
@@ -412,6 +449,35 @@ mod tests {
     }
 
     #[test]
+    fn a_version_two_database_gains_the_learned_changes_table_on_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cache.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE candidate_rules (id TEXT PRIMARY KEY);
+                 CREATE TABLE file_snapshots (file_path TEXT PRIMARY KEY);
+                 CREATE TABLE rejected_rules (id TEXT PRIMARY KEY, rejected_at TEXT NOT NULL);
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        }
+        let store = SqliteStore::open(&path).unwrap();
+        assert!(!store.is_learned("abc").unwrap());
+        store.mark_learned("abc").unwrap();
+        assert!(store.is_learned("abc").unwrap());
+    }
+
+    #[test]
+    fn a_change_marked_learned_stays_learned_and_marking_it_again_is_harmless() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.mark_learned("abc").unwrap();
+        store.mark_learned("abc").unwrap();
+        assert!(store.is_learned("abc").unwrap());
+        assert!(!store.is_learned("abd").unwrap());
+    }
+
+    #[test]
     fn a_fresh_database_has_both_tables_and_the_current_schema_version() {
         let store = SqliteStore::open_in_memory().unwrap();
         let version: i32 = store
@@ -420,7 +486,12 @@ mod tests {
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
 
-        for table in ["candidate_rules", "file_snapshots", "rejected_rules"] {
+        for table in [
+            "candidate_rules",
+            "file_snapshots",
+            "rejected_rules",
+            "learned_changes",
+        ] {
             let found: i32 = store
                 .connection()
                 .query_row(

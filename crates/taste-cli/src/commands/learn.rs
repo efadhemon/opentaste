@@ -5,11 +5,16 @@
 //! anti-pattern the commit added. Walking further back through history is out
 //! of scope for v0.1: a wrong detector would be multiplied across every commit
 //! ever made.
+//!
+//! Each file's change is learned from once. The hook fires again on `git
+//! commit --amend`, a cherry-pick or a rebuilt branch, and the command can be
+//! run by hand; a change already in the cache is skipped, or one correction
+//! would be counted once per run.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use taste_core::{contradictions, RuleStore, SupportedLanguage};
+use taste_core::{content_hash, contradictions, RuleStore, SupportedLanguage};
 
 use crate::commands::{describe_outcome, sync};
 use crate::git;
@@ -28,6 +33,8 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     let mut learned = 0usize;
     let mut promoted = false;
     let mut contradicted = BTreeSet::new();
+    let mut fingerprints = Vec::new();
+    let mut seen_before = 0usize;
     for (path, added) in changed_files(&root) {
         if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::is_script) {
             continue;
@@ -40,6 +47,12 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
         let (Some(before), Some(after)) = (before, show(&root, "HEAD", &path)) else {
             continue;
         };
+        let fingerprint = change_fingerprint(&path, &before, &after);
+        if store.candidates().is_learned(&fingerprint)? {
+            seen_before += 1;
+            continue;
+        }
+        fingerprints.push(fingerprint);
         for observation in taste_core::analyze(&before, &after, &path)? {
             let outcome = store.record_observation(observation)?;
             promoted |= outcome.promoted().is_some();
@@ -55,14 +68,34 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
             ));
         }
     }
+    // Marked only once everything above succeeded, so a failed run is retried.
+    for fingerprint in &fingerprints {
+        store.candidates().mark_learned(fingerprint)?;
+    }
     if learned == 0 && contradicted.is_empty() {
-        out.say("Nothing to learn from HEAD.");
+        if seen_before > 0 && fingerprints.is_empty() {
+            out.say("Already learned from the changes in HEAD.");
+        } else {
+            out.say("Nothing to learn from HEAD.");
+        }
     }
     if promoted || !contradicted.is_empty() {
         let report = store.sync()?;
         sync::report_sync(&report, store, out);
     }
     Ok(())
+}
+
+/// Identifies one file's change by its path and both versions, not by commit:
+/// an amended or cherry-picked commit carrying the same change matches.
+fn change_fingerprint(path: &Path, before: &str, after: &str) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let mut bytes = Vec::with_capacity(path.len() + before.len() + after.len() + 2);
+    for part in [path.as_bytes(), before.as_bytes(), after.as_bytes()] {
+        bytes.extend_from_slice(part);
+        bytes.push(0);
+    }
+    content_hash(&bytes)
 }
 
 /// Files `HEAD` added or modified, relative to the project root, with whether

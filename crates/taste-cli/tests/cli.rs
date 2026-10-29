@@ -447,6 +447,68 @@ fn learn_from_git_head_decays_a_rule_whose_anti_pattern_the_commit_added() {
     assert!(confidence < 0.95, "{after}");
 }
 
+fn amend(dir: &Path) {
+    git(
+        dir,
+        &[
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "--amend",
+            "-m",
+            "amended",
+        ],
+    );
+}
+
+#[test]
+fn learning_the_same_commit_again_does_not_count_its_correction_twice() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "src/users/user.entity.ts", ENTITY_BEFORE);
+    commit(root, "src/users/user.entity.ts", ENTITY_AFTER);
+
+    let first = taste(root, &["learn", "--from-git-head"]);
+    assert!(stdout(&first).contains("candidate"), "{}", stdout(&first));
+    let status_after_first = stdout(&taste(root, &["status"]));
+
+    let again = taste(root, &["learn", "--from-git-head"]);
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert!(
+        stdout(&again).contains("Already learned"),
+        "{}",
+        stdout(&again)
+    );
+    assert_eq!(stdout(&taste(root, &["status"])), status_after_first);
+}
+
+#[test]
+fn an_amended_commit_with_the_same_change_is_not_learned_from_again() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "src/users/user.entity.ts", ENTITY_BEFORE);
+    commit(root, "src/users/user.entity.ts", ENTITY_AFTER);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    let status_before_amend = stdout(&taste(root, &["status"]));
+
+    // `--amend` makes a new commit and fires post-commit again.
+    amend(root);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(
+        stdout(&output).contains("Already learned"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(stdout(&taste(root, &["status"])), status_before_amend);
+}
+
 #[test]
 fn learn_without_a_commit_fails_cleanly() {
     let dir = git_repo();

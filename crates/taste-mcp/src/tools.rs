@@ -12,7 +12,9 @@ use serde_json::{json, Value};
 use taste_core::models::RuleSource;
 use taste_core::storage::validate_scope;
 use taste_core::transpiler::SyncReport;
-use taste_core::{Observation, Outcome, RuleCategory, RuleStore, TasteRule};
+use taste_core::{
+    scrub, Observation, Outcome, RuleCategory, RuleStore, SupportedLanguage, TasteRule,
+};
 
 pub const GET_CODING_TASTE: &str = "get_coding_taste";
 pub const RECORD_CODING_TASTE: &str = "record_coding_taste";
@@ -181,8 +183,12 @@ fn record(arguments: &Value, store: &RuleStore) -> ToolResult {
     validate_scope(scope)
         .map_err(|err| format!("{err}. Pass a valid glob such as `src/**/*.ts`."))?;
     let instruction = required_str(arguments, "instruction")?;
-    let anti = optional_str(arguments, "anti_pattern")?;
-    let preferred = optional_str(arguments, "preferred_pattern")?;
+    // Snippets land in the git-tracked rule file, so they get the same secret
+    // scrubbing as snippets learned from a diff. The scope's extension picks
+    // the grammar; TSX parses JavaScript and TypeScript alike.
+    let lang = SupportedLanguage::from_path(Path::new(scope)).unwrap_or(SupportedLanguage::Tsx);
+    let anti = optional_str(arguments, "anti_pattern")?.map(|s| scrub(&s, lang));
+    let preferred = optional_str(arguments, "preferred_pattern")?.map(|s| scrub(&s, lang));
 
     let observation = Observation::new(category, scope, RuleSource::McpFeedback, instruction)
         .with_patterns(anti, preferred);
