@@ -1,6 +1,11 @@
 name: Release
-# Tags only, and separate from CI. Push `vX.Y.Z` after bumping every version
-# (the workspace Cargo.toml and both package.json files) to the same X.Y.Z.
+# Separate from CI. Push `vX.Y.Z` after bumping every version (the workspace
+# Cargo.toml and both package.json files) to the same X.Y.Z.
+#
+# Only a tag publishes. A pull request that touches the release path, or a
+# manual run, is a dry run: it builds every target, packs every npm package
+# and the VSIX, runs the packed wrapper, and publishes nothing. Do one before
+# the first tag of a release, because an npm version cannot be published twice.
 #
 # Secrets, all in the `release` environment:
 #   NPM_TOKEN   an npm automation token that can publish the @opentaste scope
@@ -9,6 +14,11 @@ name: Release
 "on":
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - packages/npm-opentaste/**
+  workflow_dispatch:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -23,13 +33,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
     steps:
       - uses: actions/checkout@v5
       - id: check
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME#v}"
           cargo=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          # A dry run has no tag, so it checks the three versions agree.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            tag="$cargo"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
           ext=$(node -p "require('./packages/vscode-opentaste/package.json').version")
           npm=$(node -p "require('./packages/npm-opentaste/package.json').version")
           echo "tag=$tag cargo=$cargo extension=$ext npm=$npm"
@@ -70,6 +88,7 @@ jobs:
 
   github-release:
     needs: [versions, build, extension-package]
+    if: needs.versions.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -96,8 +115,64 @@ jobs:
           files: release/*
           fail_on_unmatched_files: true
 
-  npm:
+  npm-package:
     needs: [versions, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, package-manager-cache: false }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, pattern: "taste-*" }
+      - name: Pack one package per platform, then the wrapper
+        shell: bash
+        env:
+          VERSION: ${{ needs.versions.outputs.version }}
+        run: |
+          # Every path starts with `./`: npm reads `npm/linux-x64` or
+          # `packages/npm-opentaste` as a GitHub `owner/repo` shorthand.
+          mkdir -p tarballs/platforms tarballs/wrapper
+          for dir in artifacts/taste-*; do
+            pair="${dir#artifacts/taste-}"
+            platform="${pair%-*}"
+            arch="${pair##*-}"
+            binary=$(ls "$dir"/*)
+            out="./npm/$pair"
+            node packages/npm-opentaste/scripts/platform-package.js platform "$platform" "$arch" "$binary" "$out" "$VERSION"
+            npm pack "$out" --pack-destination tarballs/platforms
+          done
+          node packages/npm-opentaste/scripts/platform-package.js wrapper packages/npm-opentaste "$VERSION"
+          npm pack ./packages/npm-opentaste --pack-destination tarballs/wrapper
+          count=$(ls tarballs/platforms/*.tgz | wc -l)
+          if [ "$count" -ne 5 ]; then
+            echo "::error::expected 5 platform tarballs, found $count"; exit 1
+          fi
+      # Lay the packed wrapper and the linux-x64 package out as npm would
+      # install them, without the registry, and run `taste` through the wrapper.
+      - name: Run the packed wrapper
+        shell: bash
+        env:
+          VERSION: ${{ needs.versions.outputs.version }}
+        run: |
+          root=smoke/node_modules/@opentaste
+          mkdir -p "$root/cli" "$root/cli-linux-x64"
+          tar -xzf tarballs/wrapper/*.tgz -C "$root/cli" --strip-components=1
+          tar -xzf tarballs/platforms/opentaste-cli-linux-x64-"$VERSION".tgz -C "$root/cli-linux-x64" --strip-components=1
+          out=$(node "$root/cli/bin/taste.js" --version)
+          echo "$out"
+          case "$out" in
+            *"$VERSION"*) ;;
+            *) echo "::error::packed wrapper printed '$out', expected $VERSION"; exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarballs
+          path: tarballs
+          if-no-files-found: error
+
+  npm:
+    needs: [versions, npm-package]
+    if: needs.versions.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -111,30 +186,16 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - uses: actions/download-artifact@v4
-        with: { path: artifacts, pattern: "taste-*" }
-      - name: Publish one package per platform
+        with: { name: npm-tarballs, path: tarballs }
+      # The platform packages go first: the wrapper depends on them.
+      - name: Publish
         shell: bash
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ needs.versions.outputs.version }}
         run: |
-          for dir in artifacts/taste-*; do
-            pair="${dir#artifacts/taste-}"
-            platform="${pair%-*}"
-            arch="${pair##*-}"
-            binary=$(ls "$dir"/*)
-            out="npm/$pair"
-            node packages/npm-opentaste/scripts/platform-package.js platform "$platform" "$arch" "$binary" "$out" "$VERSION"
-            npm publish "$out" --access public --provenance
+          for tarball in ./tarballs/platforms/*.tgz ./tarballs/wrapper/*.tgz; do
+            npm publish "$tarball" --access public --provenance
           done
-      - name: Publish the wrapper
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ needs.versions.outputs.version }}
-        run: |
-          node packages/npm-opentaste/scripts/platform-package.js wrapper packages/npm-opentaste "$VERSION"
-          npm publish packages/npm-opentaste --access public --provenance
 
   extension-package:
     needs: versions
@@ -157,6 +218,7 @@ jobs:
     # VS Code Marketplace for VS Code, Open VSX for Cursor and Windsurf, which
     # can only install from there.
     needs: [versions, extension-package]
+    if: needs.versions.outputs.publish == 'true'
     runs-on: ubuntu-latest
     environment: release
     steps:

@@ -196,14 +196,23 @@ corporate proxies, and is exactly the kind of network call a tool advertising
       release day. Use `ubuntu-24.04-arm` and `macos-14` for the arm64 targets.
 - [x] Attach the binaries to a tagged GitHub release, and publish the platform
       packages plus the `opentaste` wrapper to npm. Written in
-      `.github/workflows/release.yml`, **not yet run**: it needs the
-      `release` environment with `NPM_TOKEN`, `VSCE_PAT` and `OVSX_PAT`, and
-      fails fast if the tag, the workspace `Cargo.toml` and both
-      `package.json` versions disagree. npm publishes use `--provenance`.
+      `.github/workflows/release.yml`, **not yet run from a tag**: publishing
+      needs the `release` environment with `NPM_TOKEN`, `VSCE_PAT` and
+      `OVSX_PAT`, and fails fast if the tag, the workspace `Cargo.toml` and
+      both `package.json` versions disagree. npm publishes use `--provenance`
+      and upload the exact tarballs the `npm-package` job packed and ran.
+- [x] Dry-run the release before the first tag. A pull request touching
+      `release.yml` or `packages/npm-opentaste/`, or a manual run, builds all
+      five targets, packs every npm package and the VSIX, and runs
+      `taste --version` through the packed wrapper, but skips every publish
+      job. Simulating it locally found that npm read `npm/linux-x64` and
+      `packages/npm-opentaste` as GitHub `owner/repo` shorthands, so the
+      first tag would have failed at its first `npm publish`; every path now
+      starts with `./`.
 - [x] Publish the extension to **both** the VS Code Marketplace (`vsce`) and Open
       VSX (`ovsx`). SPEC.md section 9 targets Windsurf and Cursor users, who can
       only install from the latter.
-- [x] Keep the release workflow separate from CI and triggered on tags only.
+- [x] Keep the release workflow separate from CI, and publish from tags only.
 
 ---
 
