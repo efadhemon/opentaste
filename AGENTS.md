@@ -201,6 +201,7 @@ cargo test --workspace
 cargo insta review   # after changing transpiler output
 ```
 
-The toolchain floor is declared as `rust-version = "1.89"` in the workspace
-`Cargo.toml`, because the advisory lock uses `std::fs::File::lock`. Do not use a
-newer std API without raising that line and the MSRV job in CI together.
+The toolchain floor is declared as `rust-version = "1.90"` in the workspace
+`Cargo.toml`. `std::fs::File::lock` stabilised in 1.89; the floor is 1.90
+because `tree-sitter` 0.27 requires it. Do not use a newer std API without
+raising that line and the MSRV job in CI together.

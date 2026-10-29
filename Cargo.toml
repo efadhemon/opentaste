@@ -9,8 +9,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-# `std::fs::File::lock` (used for the advisory rule-store lock) stabilised in 1.89.
-rust-version = "1.89"
+# `std::fs::File::lock` stabilised in 1.89. The floor is 1.90 because
+# `tree-sitter` 0.27 declares `rust-version = "1.90"`.
+rust-version = "1.90"
 license = "MIT"
 authors = ["OpenTaste Contributors"]
 repository = "https://github.com/opentaste/opentaste"
@@ -34,6 +35,7 @@ tree-sitter = "0.27"
 tree-sitter-typescript = "0.23"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
+tree-sitter-go = "0.23"
 clap = { version = "4.6", features = ["derive"] }
 notify = "8.0"
 ratatui = "0.30"

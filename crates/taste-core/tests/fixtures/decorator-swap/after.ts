@@ -1,0 +1,2 @@
+@AutoEntity()
+export class User {}
