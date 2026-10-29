@@ -32,6 +32,7 @@ before it is reliable.
 | M8 | Dashboard shows a **syntax-highlighted** avoid/prefer diff box (§8) | Red/green colouring, no syntax highlighting | `tui/ui.rs` |
 | M9 | Scanner walks with **`ignore::WalkParallel`** and meets **<300 ms** (§1, §8) | Serial `WalkBuilder` walk; only parsing is parallel. 991 files took 321 ms in release. | `ast/scan.rs:65` |
 | M10 | `detected_stack` like `["typescript", "nestjs", "react", "postgresql"]` (§4.1) | Detects rust, python, go and some JS frameworks. Never `typescript` and never a database. Root `package.json` only. | `ast/scan.rs:255` **Fixed in phase 7 step 5.** |
+| M12 | Deduplication by "token-jaccard **& structural similarity**" (§2 `scorer/dedup.rs`) | Token overlap of the instruction plus scope equality only. Two observations with different wording but the same avoid/prefer snippets become two rules. Found while validating the phase plans. | `scorer/dedup.rs` |
 | M11 | `npx opentaste` runs the tool (§2, §10 phase 6) | The npm name `opentaste` belongs to an unrelated package. The wrapper is `@opentaste/cli`. **Cannot be built as written**; see section 4. | `packages/npm-opentaste` |
 
 ## 2. Built, but wrong or not working as described
@@ -50,6 +51,8 @@ before it is reliable.
 | W10 | Snapshot rows for deleted files are never pruned | The cache grows; stale tallies | Phase 3 review, improvement 5. **Fixed in phase 7 step 8.** |
 | W11 | Non-script files are read, hashed, parsed and snapshotted for no counts | Wasted scan time (until M2 lands) | Phase 3 review, improvement 3. **Fixed in phase 7 step 8.** |
 | W12 | `MAX_FILE_BYTES` doc says "at or above", the code uses `>` | Doc mismatch | Phase 3 review, improvement 9. **Fixed in phase 7 step 8.** |
+
+| W13 | A standalone `taste scan` confirms rules but does not run `taste sync`, unlike every other learner (§5.1: promotion "triggers `taste sync`") | Rules sit in `rules.json` without reaching the editor files until something else syncs | Plan validation. Phase 10 step 4. |
 
 ## 3. Documentation that is out of date
 
@@ -90,13 +93,18 @@ gate: run on real repositories, and a human agrees with every rule it emits.
 | Phase | Scope | Rows |
 | --- | --- | --- |
 | **7: Correctness** | Make demotion reachable (W3); decorator contradictions (W4); reproduce and fix cross-source double counting (W5); settle the correction heuristic (W6); monorepo scopes and stack detection (W7, M10); barrel exports (W8); scrubber boundary (W9); snapshot pruning and skipping non-script files (W10, W11, W12) | W3–W12, M10 |
-| **8: More languages** | Analyzers and diff detectors for Python, Rust and Go, each with its own fixtures and precision gate (M2) | M2 |
+| **8: More languages** | Analyzers and diff detectors for Python, Rust and Go, each with its own fixtures and precision gate (M2); structural-similarity deduplication (M12) | M2, M12 |
 | **9: Missing TypeScript detectors** | Strict null checks from `tsconfig.json` (M3), zod schemas (M4), dependency-injection patterns (M5) | M3–M5 |
 | **10: Git history** | Mine recent history on `taste scan`, with a bounded window and the W1 fingerprints so nothing is counted twice (M1) | M1 |
 | **11: Cross-project rules** | `~/.taste/global.db`: what is shared, opt-in, and how a project overrides it (M6). Needs a privacy design before code. | M6 |
 | **12: Dashboard and speed** | Edit a rule in the dashboard (M7), syntax highlighting (M8), parallel walk and the <300 ms target (M9) | M7–M9 |
-| **Docs** | README, SPEC.md and AGENTS.md brought in line (D1–D6); the website's remaining steps | D1–D6 |
-| **Release** | Section 5, then tag `v1.0.0` on `main` | — |
+| **13: Docs** | README, SPEC.md and AGENTS.md brought in line (D1–D6, M11); the website's remaining steps | D1–D6, M11 |
+| **14: Release** | Section 5, then tag `v1.0.0` on `main` | — |
+
+Each phase has its own file, [PHASE-8.md](PHASE-8.md) to
+[PHASE-14.md](PHASE-14.md). [V1-TRACEABILITY.md](V1-TRACEABILITY.md) maps
+every claim in SPEC.md to the code that implements it or the phase step
+that will.
 
 Phase 7 comes first because phases 8 to 10 multiply whatever the learning
 pipeline does wrong: more languages and more history feed more observations
