@@ -301,8 +301,10 @@ and the result is 0 observations. Use `let Some(logger) = … else { continue };
 6. **Monorepo scope.** `scope_for_path("apps/api/src/x.service.ts")` gives
    `apps/**/*.service.ts`, which covers every app. For monorepos, consider
    scoping to the nearest directory that has a `package.json`.
+   **Status: done** in phase 7 step 5.
 7. **Monorepo stack detection.** `detect_stack` reads only the root
    `package.json`. Workspaces (`apps/*/package.json`) are not detected.
+   **Status: done** in phase 7 step 5.
 8. **Contradiction checks are probably too strict for decorators.** A decorator
    anti-pattern like `@Get()` is shorter than `MIN_NEEDLE` (8), so it can never
    contradict. That is safe, but rules from `DecoratorSwap` will rarely decay.

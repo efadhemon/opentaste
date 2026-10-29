@@ -63,7 +63,7 @@ pub fn learn(store: &RuleStore, file: &Path, before: &str, after: &str) -> anyho
     // The scope is derived from the path, so an absolute path would widen it
     // to `**/*.ext`.
     let relative = store.paths().relativize(file).to_path_buf();
-    let observations = taste_core::analyze(before, after, &relative)?;
+    let observations = taste_core::analyze_in(store.paths(), before, after, &relative)?;
     store
         .candidates()
         .prune_deltas(chrono::Utc::now() - chrono::Duration::days(PENDING_DELTA_DAYS))?;

@@ -94,19 +94,25 @@ extension treats any edit that is not itself a burst as a correction.
 
 ## Step 5: Monorepo scopes and stack detection (W7, M10)
 
-- [ ] A learned scope starts at the nearest directory under the project root
+- [x] A learned scope starts at the nearest directory under the project root
       that has its own `package.json`, `Cargo.toml`, `pyproject.toml` or
-      `go.mod`: `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`.
-      Without one, behaviour is unchanged (`src/**/*.service.ts`).
-- [ ] `detected_stack` adds `typescript` when a `tsconfig.json` exists,
-      databases from dependencies (`pg`, `mysql2`, `mongodb`/`mongoose`,
-      `sqlite3`/`better-sqlite3`, `prisma`, `typeorm`, `drizzle-orm`), and reads
-      workspace packages (`workspaces` in `package.json`, and
-      `pnpm-workspace.yaml`), not only the root.
-- [ ] Tests: the monorepo scope with and without a package manifest; a
-      workspace whose framework is only in `apps/web/package.json`;
-      `typescript` and `postgresql` detected; the existing single-package
-      tests unchanged.
+      `go.mod` (`config::PACKAGE_MANIFESTS`, `Paths::package_dir`):
+      `apps/api/src/x.service.ts` gives `apps/api/**/*.service.ts`. Without
+      one, behaviour is unchanged. Both learners call the new
+      `taste_core::analyze_in`; `analyze` itself stays pure and path-only.
+- [x] `detected_stack` adds `typescript` (a `tsconfig.json` or the
+      `typescript` dependency), databases (`postgresql`, `mysql`, `mongodb`,
+      `sqlite`, `prisma`, `typeorm`, `drizzle`), and reads every workspace
+      package from `workspaces` in `package.json` (array or `packages`
+      object) and the `packages:` list of `pnpm-workspace.yaml`, including
+      `!` exclusions, four levels deep, never inside `node_modules`.
+- [x] Tests: package scope with a `package.json` and with a `go.mod`; no
+      scope change without a manifest, including a folder that only looks
+      like a package; a CLI test that `learn-delta` uses it (fails if it
+      calls `analyze`); an npm workspace whose frameworks are only in
+      `apps/*/package.json`; a pnpm workspace with an exclusion;
+      `typescript`, `prisma` and `mysql` in a single package; packages
+      outside the workspace globs and inside `node_modules` ignored.
 
 ## Step 6: Barrel exports (W8)
 

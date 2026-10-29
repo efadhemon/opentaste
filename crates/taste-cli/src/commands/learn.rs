@@ -58,7 +58,7 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
             continue;
         }
         fingerprints.push(fingerprint);
-        for observation in taste_core::analyze(&before, &after, &path)? {
+        for observation in taste_core::analyze_in(store.paths(), &before, &after, &path)? {
             if store
                 .candidates()
                 .take_delta(&delta_key(&path, &observation))?

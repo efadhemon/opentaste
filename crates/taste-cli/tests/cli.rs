@@ -590,6 +590,24 @@ fn two_different_corrections_of_the_same_kind_still_count_twice() {
 }
 
 #[test]
+fn an_edit_in_a_monorepo_package_learns_a_rule_scoped_to_that_package() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    std::fs::create_dir_all(root.join("apps/api/src")).unwrap();
+    std::fs::write(root.join("apps/api/package.json"), "{}").unwrap();
+
+    learn_delta(
+        root,
+        "apps/api/src/user.service.ts",
+        &find_user("Error", "missing id"),
+        &find_user("NotFoundError", "missing id"),
+    );
+    let status = stdout(&taste(root, &["status"]));
+    assert!(status.contains("apps/api/**/*.service.ts"), "{status}");
+}
+
+#[test]
 fn learn_without_a_commit_fails_cleanly() {
     let dir = git_repo();
     assert!(taste(dir.path(), &["init", "--quiet"]).status.success());
