@@ -10,13 +10,17 @@
 //! commit --amend`, a cherry-pick or a rebuilt branch, and the command can be
 //! run by hand; a change already in the cache is skipped, or one correction
 //! would be counted once per run.
+//!
+//! A correction the editor extension already learned through `learn-delta`
+//! is skipped too, once: the extension saw it when the file was saved, and
+//! the commit carries the same edit.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use taste_core::{content_hash, contradictions, RuleStore, SupportedLanguage};
 
-use crate::commands::{describe_outcome, sync};
+use crate::commands::{delta_key, describe_outcome, sync};
 use crate::git;
 use crate::output::Output;
 
@@ -35,6 +39,7 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     let mut contradicted = BTreeSet::new();
     let mut fingerprints = Vec::new();
     let mut seen_before = 0usize;
+    let mut from_editor = 0usize;
     for (path, added) in changed_files(&root) {
         if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::is_script) {
             continue;
@@ -54,6 +59,17 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
         }
         fingerprints.push(fingerprint);
         for observation in taste_core::analyze(&before, &after, &path)? {
+            if store
+                .candidates()
+                .take_delta(&delta_key(&path, &observation))?
+            {
+                from_editor += 1;
+                out.say(format!(
+                    "  already    learned from the editor: {}",
+                    observation.instruction
+                ));
+                continue;
+            }
             let outcome = store.record_observation(observation)?;
             promoted |= outcome.promoted().is_some();
             learned += 1;
@@ -72,7 +88,7 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     for fingerprint in &fingerprints {
         store.candidates().mark_learned(fingerprint)?;
     }
-    if learned == 0 && contradicted.is_empty() {
+    if learned == 0 && from_editor == 0 && contradicted.is_empty() {
         if seen_before > 0 && fingerprints.is_empty() {
             out.say("Already learned from the changes in HEAD.");
         } else {

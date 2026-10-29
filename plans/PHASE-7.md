@@ -59,16 +59,20 @@ The extension learns a correction when the file is saved. If the AI's block
 had already been committed, the next commit carries the same correction and
 the post-commit hook learns it again.
 
-- [ ] Reproduce first, with a CLI test: `learn-delta` on a correction, then a
-      commit with the same before/after for that block, then
-      `learn --from-git-head`. Record whether the count goes up twice. If it
-      does not, write down why and close the step.
-- [ ] If it does: `learn-delta` records each observation it makes in a
-      `recent_deltas` cache table keyed by file, rule id and the scrubbed
-      preferred snippet. `learn --from-git-head` skips an observation that
-      matches an entry for the same file and removes the entry.
-- [ ] Tests: the reproduction above counts once; two *different* corrections
-      of the same kind in the same file still count twice.
+- [x] Reproduced with the debug build: a correction learned by `learn-delta`
+      (confidence 0.45, seen once), then committed, was learned again by
+      `learn --from-git-head` (0.56, seen twice). The detector extracts the
+      same snippets from the extension's block and from the committed file,
+      so the two can be matched exactly.
+- [x] `learn-delta` remembers each observation in a `pending_deltas` cache
+      table (schema version 4), keyed by file, category, instruction and
+      both snippets (`commands::delta_key`). `learn --from-git-head` skips an
+      observation whose key is there, once, and removes it. Keys older than
+      30 days are pruned. The `learn-delta` stdout contract is unchanged.
+- [x] Tests: the reproduction counts once (fails without the skip); a
+      different correction of the same kind in the same file still counts a
+      second time; a remembered key is taken at most once and stale ones are
+      pruned.
 
 ## Step 4: Settle the correction heuristic (W6)
 
