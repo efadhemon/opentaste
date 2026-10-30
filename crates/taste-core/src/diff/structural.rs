@@ -15,11 +15,12 @@ use std::path::Path;
 
 use tree_sitter::{Node, Tree};
 
-use crate::ast::TS_STRICT_NULL;
+use crate::ast::validation::{schema_library, used_libraries};
 use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
     node_text, parse, unquote, Family, ScriptQuery, SupportedLanguage,
 };
+use crate::ast::{validate_with, Library, TS_STRICT_NULL};
 use crate::config::Paths;
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
@@ -121,6 +122,7 @@ const DETECTORS: &[&dyn Detector] = &[
     &ErrorClass,
     &ControlFlow,
     &NonNullAssertion,
+    &SchemaLibrarySwap,
 ];
 
 struct DecoratorSwap;
@@ -131,6 +133,7 @@ struct FunctionSyntax;
 struct ErrorClass;
 struct ControlFlow;
 struct NonNullAssertion;
+struct SchemaLibrarySwap;
 
 impl Detector for DecoratorSwap {
     fn detect(
@@ -404,6 +407,68 @@ impl Detector for NonNullAssertion {
         }
         None
     }
+}
+
+/// `const UserSchema = yup.object(…)` rewritten as `z.object(…)` under the
+/// same name, in an edit that also stops using the old library in the file:
+/// a migration, not a second library added beside the first.
+impl Detector for SchemaLibrarySwap {
+    fn detect(
+        &self,
+        before_tree: &Tree,
+        before_src: &str,
+        after_tree: &Tree,
+        after_src: &str,
+        path: &Path,
+    ) -> Option<Observation> {
+        let before_libraries = used_libraries(before_tree, before_src);
+        let after_libraries = used_libraries(after_tree, after_src);
+        let after_schemas = schemas(after_tree, after_src, &after_libraries);
+        for (name, (old, old_text)) in schemas(before_tree, before_src, &before_libraries) {
+            let Some((new, new_text)) = after_schemas.get(&name) else {
+                continue;
+            };
+            let still_used = after_libraries.iter().any(|(library, _)| *library == old);
+            if *new == old || still_used {
+                continue;
+            }
+            return Some(observation(
+                RuleCategory::Architecture,
+                path,
+                validate_with(*new),
+                old_text,
+                new_text.clone(),
+            ));
+        }
+        None
+    }
+}
+
+/// Schemas declared with `const name = <library call chain>`, by name.
+fn schemas(
+    tree: &Tree,
+    source: &str,
+    libraries: &[(Library, HashSet<String>)],
+) -> std::collections::BTreeMap<String, (Library, String)> {
+    let mut found = std::collections::BTreeMap::new();
+    for_each_node(tree.root_node(), &mut |node| {
+        if node.kind() != "variable_declarator" {
+            return;
+        }
+        let (Some(name), Some(value)) = (
+            node.child_by_field_name("name"),
+            node.child_by_field_name("value"),
+        ) else {
+            return;
+        };
+        if let Some(library) = schema_library(value, source, libraries) {
+            found.insert(
+                node_text(name, source).to_string(),
+                (library, node_text(node, source).to_string()),
+            );
+        }
+    });
+    found
 }
 
 /// `(object, property, text)` of every `object!.property`.

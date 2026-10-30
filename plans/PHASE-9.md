@@ -72,20 +72,39 @@ mention. Markers now count only on their own line outside fenced code
 release." The risk is mistaking one schema in a utility file for a project
 convention.
 
-- [ ] Scan dimension "validation library": per file, which of zod, yup,
+- [x] Scan dimension "validation library": per file, which of zod, yup,
       joi, class-validator, valibot and io-ts it imports and uses. Files
-      that validate nothing count for no side.
-- [ ] A rule only when one library is used in at least 80% of the files
+      that validate nothing count for no side. (`ast/analyzers/validation.rs`.
+      "Uses" means a value use of a non-type import; a name used only in type
+      positions, such as `z.infer<…>`, validates nothing.)
+- [x] A rule only when one library is used in at least 80% of the files
       that validate anything, across at least 10 such files: "Validate input
-      with zod schemas" (or whichever library wins).
-- [ ] Secondary rule, same thresholds, zod only: types derived with
+      with zod schemas" (or whichever library wins). The six instructions
+      conflict with one another (`conflicting_instructions`), so a later
+      migration cannot install a second library's rule beside the first.
+- [x] Secondary rule, same thresholds, zod only: types derived with
       `z.infer<typeof Schema>` versus a hand-written interface next to the
-      schema.
-- [ ] Diff detector: a yup/joi schema replaced by the zod equivalent in one
-      edit (import source swap plus schema call).
-- [ ] Tests: unanimous zod; mixed zod/yup below 80%; 9 files (below the
+      schema. (Only the derived side promotes. A hand-written twin is an
+      interface or object type named after a schema in the same file,
+      `UserSchema` and `User`. A file that only derives from a schema defined
+      elsewhere still counts as derived.)
+- [x] Diff detector: a yup/joi schema replaced by the zod equivalent in one
+      edit (import source swap plus schema call). (Any of the six to another,
+      paired by the declared name, and only when the old library is no longer
+      used in the file afterwards.)
+- [x] Tests: unanimous zod; mixed zod/yup below 80%; 9 files (below the
       floor); `z.infer` counting; a file that only imports types from zod
       counts nothing.
+- [ ] **Zod precision gate** (Definition of done). *Awaiting the
+      maintainer's yes/no.* documenso/documenso, 2026-10-30:
+
+      | Rule | Counts | Agent | Evidence |
+      | --- | --- | --- | --- |
+      | Validate input with zod schemas | 442 · 0, 442 validating files | yes | 476 files import zod (34 only as types); no yup, joi, class-validator or valibot anywhere |
+      | Derive types with `z.infer<typeof Schema>` | 689 · 0, 360 files | yes | the house style is `ZFoo` schemas with `TFoo = z.infer<typeof ZFoo>` |
+
+      create-t3-turbo has 8 validating files, below the floor, and correctly
+      gets no validation rule.
 
 ## Step 3: Dependency injection (M5)
 

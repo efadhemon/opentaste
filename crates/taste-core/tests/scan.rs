@@ -6,7 +6,7 @@ use common::Project;
 use taste_core::ast::stored_tally;
 use taste_core::ast::{
     COMPILER_CONFIDENCE, GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS,
-    PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK, TS_STRICT_NULL,
+    PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK, TS_STRICT_NULL, VALIDATE_WITH_ZOD,
 };
 use taste_core::scan;
 
@@ -580,4 +580,54 @@ fn a_project_without_strict_null_checks_gets_no_rule() {
         .iter()
         .filter_map(|outcome| outcome.promoted())
         .all(|rule| rule.instruction != TS_STRICT_NULL));
+}
+
+fn write_validators(project: &Project, zod: usize, yup: usize) {
+    for index in 0..zod {
+        project.write(
+            &format!("src/schemas/zod{index}.ts"),
+            "import { z } from 'zod';\nexport const S = z.object({ a: z.string() });\n",
+        );
+    }
+    for index in 0..yup {
+        project.write(
+            &format!("src/schemas/yup{index}.ts"),
+            "import * as yup from 'yup';\nexport const S = yup.object({ a: yup.string() });\n",
+        );
+    }
+}
+
+fn promoted_instructions(report: &taste_core::ScanReport) -> Vec<String> {
+    report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .map(|rule| rule.instruction.clone())
+        .collect()
+}
+
+#[test]
+fn a_codebase_validating_with_zod_gets_a_zod_rule() {
+    let project = Project::with_cache_db();
+    write_validators(&project, 10, 0);
+    // Files that validate nothing do not dilute the ratio.
+    for index in 0..20 {
+        project.write(&format!("src/plain{index}.ts"), "export const x = 1;\n");
+    }
+    let report = scan(&project.store).unwrap();
+    assert!(promoted_instructions(&report).contains(&VALIDATE_WITH_ZOD.to_string()));
+}
+
+#[test]
+fn mixed_or_too_few_validating_files_get_no_validation_rule() {
+    for (zod, yup) in [(7, 3), (9, 0)] {
+        let project = Project::with_cache_db();
+        write_validators(&project, zod, yup);
+        let report = scan(&project.store).unwrap();
+        let instructions = promoted_instructions(&report);
+        assert!(
+            !instructions.iter().any(|i| i.starts_with("Validate input")),
+            "{zod} zod, {yup} yup: {instructions:?}"
+        );
+    }
 }

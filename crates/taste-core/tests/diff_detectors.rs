@@ -446,3 +446,20 @@ fn a_non_null_assertion_replaced_by_an_explicit_check_is_learned() {
         "{found:?}"
     );
 }
+
+#[test]
+fn a_yup_schema_rewritten_with_zod_is_detected() {
+    fires(
+        "typescript/schema-library-swap",
+        "src/users/schema.ts",
+        "zod",
+    );
+}
+
+#[test]
+fn a_schema_moved_to_zod_while_yup_stays_in_the_file_is_not_a_migration() {
+    let before = "import * as yup from 'yup';\nexport const A = yup.object({});\nexport const B = yup.object({});\n";
+    let after = "import * as yup from 'yup';\nimport { z } from 'zod';\nexport const A = z.object({});\nexport const B = yup.object({});\n";
+    let found = analyze(before, after, Path::new("src/schema.ts")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}

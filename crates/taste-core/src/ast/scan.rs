@@ -299,7 +299,7 @@ fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation
     if store.rules()?.find(&id).is_some() {
         return Ok(true);
     }
-    if let Some(opposite) = promote::opposite_instruction(&observation.instruction) {
+    for opposite in promote::conflicting_instructions(&observation.instruction) {
         let opposite_id = rule_id(observation.category, &observation.scope, opposite);
         if store.rules()?.find(&opposite_id).is_some() {
             return Ok(true);

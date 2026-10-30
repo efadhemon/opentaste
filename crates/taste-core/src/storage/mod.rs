@@ -511,14 +511,16 @@ impl RuleStore {
 /// opposite that might not have collided costs less than installing one that
 /// does.
 fn find_opposite_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
-    let opposite =
-        normalize_instruction(crate::ast::opposite_instruction(&observation.instruction)?);
+    let opposites: Vec<String> = crate::ast::conflicting_instructions(&observation.instruction)
+        .into_iter()
+        .map(normalize_instruction)
+        .collect();
     rules
         .rules
         .iter()
         .find(|rule| {
             rule.category == observation.category
-                && normalize_instruction(&rule.instruction) == opposite
+                && opposites.contains(&normalize_instruction(&rule.instruction))
         })
         .map(|rule| rule.id.clone())
 }
