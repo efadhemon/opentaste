@@ -4,12 +4,14 @@
 //! decides that a count is a rule; that threshold lives in [`super::promote`].
 
 mod arch;
+pub(crate) mod di;
 mod functions;
 pub(crate) mod go;
 mod imports;
 pub(crate) mod python;
 pub(crate) mod rust;
 mod types;
+pub(crate) mod validation;
 
 pub(crate) use arch::{decorator_name, is_custom_error, is_framework_decorator};
 
@@ -71,6 +73,21 @@ pub struct ScriptTally {
     pub decorators: Count,
     /// `left` is a custom error class or throw. `right` is bare `Error` or `HttpException`.
     pub errors: Count,
+    /// Per [`validation::Library::ALL`]: `files` is how many files use that
+    /// library as a value, `left` how many uses.
+    pub validation: [Count; 6],
+    /// `files` is how many files use any validation library.
+    pub validating: Count,
+    /// `left` is a `z.infer<typeof Schema>` type. `right` is a hand-written
+    /// type named after a schema in the same file.
+    pub schema_types: Count,
+    /// NestJS classes: `left` constructor injection, `right` `@Inject()` properties.
+    pub nest_injection: Count,
+    /// Angular classes: `left` constructor injection, `right` `inject()`.
+    pub angular_injection: Count,
+    /// DI-managed classes: `left` injected dependencies, `right` project
+    /// services built with `new`.
+    pub constructed_services: Count,
 }
 
 /// Counts for Python files outside tests and scripts.
@@ -125,8 +142,8 @@ pub struct Tally {
 }
 
 impl ScriptTally {
-    fn counts(&mut self) -> [&mut Count; 7] {
-        [
+    fn counts(&mut self) -> Vec<&mut Count> {
+        let mut all: Vec<&mut Count> = vec![
             &mut self.import_paths,
             &mut self.exports,
             &mut self.type_constructs,
@@ -134,7 +151,14 @@ impl ScriptTally {
             &mut self.control_flow,
             &mut self.decorators,
             &mut self.errors,
-        ]
+        ];
+        all.extend(self.validation.iter_mut());
+        all.push(&mut self.validating);
+        all.push(&mut self.schema_types);
+        all.push(&mut self.nest_injection);
+        all.push(&mut self.angular_injection);
+        all.push(&mut self.constructed_services);
+        all
     }
 }
 
@@ -213,7 +237,24 @@ impl Tally {
         };
         let (s, py, rs, go) = (&self.script, &self.python, &self.rust, &self.go);
         use Family::{Go, Python, Rust, Script};
-        vec![
+        let libraries: Vec<Dimension> = validation::Library::ALL
+            .iter()
+            .zip(s.validation)
+            .map(|(library, count)| {
+                dimension(
+                    Script,
+                    "validation",
+                    library.name(),
+                    "other libraries",
+                    Count {
+                        left: count.files,
+                        right: s.validating.files.saturating_sub(count.files),
+                        files: count.files,
+                    },
+                )
+            })
+            .collect();
+        let mut all = vec![
             dimension(
                 Script,
                 "imports",
@@ -245,6 +286,34 @@ impl Tally {
             ),
             dimension(Script, "decorators", "project", "framework", s.decorators),
             dimension(Script, "errors", "custom", "bare Error", s.errors),
+            dimension(
+                Script,
+                "zod types",
+                "z.infer",
+                "hand-written",
+                s.schema_types,
+            ),
+            dimension(
+                Script,
+                "nest DI",
+                "constructor",
+                "@Inject() property",
+                s.nest_injection,
+            ),
+            dimension(
+                Script,
+                "angular DI",
+                "constructor",
+                "inject()",
+                s.angular_injection,
+            ),
+            dimension(
+                Script,
+                "services",
+                "injected",
+                "built with new",
+                s.constructed_services,
+            ),
             dimension(Python, "imports", "absolute", "relative", py.imports),
             dimension(Python, "errors", "custom", "bare Exception", py.errors),
             dimension(Python, "logging", "logger", "print()", py.logging),
@@ -282,7 +351,9 @@ impl Tally {
                 "if/else",
                 go.control_flow,
             ),
-        ]
+        ];
+        all.splice(8..8, libraries);
+        all
     }
 }
 
@@ -296,7 +367,9 @@ impl Tally {
 ///   dimensions. Bumped once for all of phase 8: those languages are skipped
 ///   before they are read until their analyzers land, so no snapshot holds a
 ///   zero tally for them that a later step would wrongly reuse.
-const TALLY_FORMAT: &str = "tally3";
+/// - `tally4`: validation libraries, `z.infer` types and dependency
+///   injection, bumped once for all of phase 9.
+const TALLY_FORMAT: &str = "tally4";
 
 /// Persist a per-file tally in `file_snapshots.ast_signature`.
 ///
@@ -355,6 +428,8 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
     let mut tally = Tally::default();
     match lang.family() {
         Family::Script => {
+            let checks = validation::validation(lang, tree, source);
+            let injection = di::injection(lang, tree, source);
             tally.script = ScriptTally {
                 import_paths: imports::import_paths(lang, tree, source),
                 exports: imports::exports(lang, tree, source),
@@ -363,6 +438,12 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
                 control_flow: functions::control_flow(lang, tree, source),
                 decorators: arch::decorators(lang, tree, source),
                 errors: arch::errors(lang, tree, source),
+                validation: checks.libraries,
+                validating: checks.validating,
+                schema_types: checks.schema_types,
+                nest_injection: injection.nest,
+                angular_injection: injection.angular,
+                constructed_services: injection.constructed,
             }
         }
         Family::Python => tally.python = python::tally(path, tree, source),
@@ -641,7 +722,9 @@ export default loadUser;
             };
         }
         assert_eq!(decode_tally(&encode_tally(&tally)), Some(tally));
-        assert_eq!(tally.dimensions().len(), tally.counts().len());
+        // Every count is shown except `validating`, the denominator the
+        // per-library rows are already computed from.
+        assert_eq!(tally.dimensions().len() + 1, tally.counts().len());
     }
 
     #[test]

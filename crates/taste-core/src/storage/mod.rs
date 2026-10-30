@@ -363,6 +363,24 @@ impl RuleStore {
         Ok(true)
     }
 
+    /// Remove a rule whose evidence is gone, from both the confirmed file and
+    /// the candidate cache, *without* remembering it as rejected: the next
+    /// scan that finds the evidence again records it again. This is for rules
+    /// read from configuration, such as strict null checks when a
+    /// `tsconfig.json` turns them off.
+    ///
+    /// Returns `false` when no rule or candidate carries that identifier.
+    pub fn retract_rule(&self, id: &str) -> Result<bool> {
+        let _guard = self.lock()?;
+        let mut rules = self.json.load()?;
+        let removed_rule = rules.remove(id).is_some();
+        if removed_rule {
+            self.json.save(&rules)?;
+        }
+        let removed_candidate = self.candidates.delete_candidate(id)?;
+        Ok(removed_rule || removed_candidate)
+    }
+
     /// Remove a rule entirely, from both the confirmed file and the candidate
     /// cache, so it cannot immediately reappear.
     ///
@@ -493,14 +511,16 @@ impl RuleStore {
 /// opposite that might not have collided costs less than installing one that
 /// does.
 fn find_opposite_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
-    let opposite =
-        normalize_instruction(crate::ast::opposite_instruction(&observation.instruction)?);
+    let opposites: Vec<String> = crate::ast::conflicting_instructions(&observation.instruction)
+        .into_iter()
+        .map(normalize_instruction)
+        .collect();
     rules
         .rules
         .iter()
         .find(|rule| {
             rule.category == observation.category
-                && normalize_instruction(&rule.instruction) == opposite
+                && opposites.contains(&normalize_instruction(&rule.instruction))
         })
         .map(|rule| rule.id.clone())
 }

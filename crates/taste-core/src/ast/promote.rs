@@ -12,6 +12,7 @@
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
+use super::analyzers::validation::Library;
 use super::{Family, GoTally, PythonTally, RustTally, ScriptTally, Tally};
 
 /// Minimum share of occurrences the winning side must hold.
@@ -38,6 +39,46 @@ pub const PREFER_GUARD_CLAUSES: &str =
 pub const PREFER_CUSTOM_DECORATORS: &str =
     "Prefer project-specific decorators over framework decorators such as `@Entity` and `@Injectable`.";
 pub const PREFER_CUSTOM_ERRORS: &str = "Prefer custom error classes over throwing bare `Error`.";
+
+pub const VALIDATE_WITH_ZOD: &str = "Validate input with zod schemas.";
+pub const VALIDATE_WITH_YUP: &str = "Validate input with yup schemas.";
+pub const VALIDATE_WITH_JOI: &str = "Validate input with Joi schemas.";
+pub const VALIDATE_WITH_CLASS_VALIDATOR: &str =
+    "Validate input with class-validator decorators on DTO classes.";
+pub const VALIDATE_WITH_VALIBOT: &str = "Validate input with valibot schemas.";
+pub const VALIDATE_WITH_IO_TS: &str = "Validate input with io-ts codecs.";
+pub const TS_PREFER_Z_INFER: &str = "Derive TypeScript types from zod schemas with `z.infer<typeof Schema>` instead of writing a matching interface by hand.";
+
+/// Every validation-library instruction, which conflict with one another.
+const VALIDATE_WITH: [&str; 6] = [
+    VALIDATE_WITH_ZOD,
+    VALIDATE_WITH_YUP,
+    VALIDATE_WITH_JOI,
+    VALIDATE_WITH_CLASS_VALIDATOR,
+    VALIDATE_WITH_VALIBOT,
+    VALIDATE_WITH_IO_TS,
+];
+
+/// The instruction for validating with `library`.
+pub fn validate_with(library: Library) -> &'static str {
+    VALIDATE_WITH[Library::ALL.iter().position(|l| *l == library).unwrap_or(0)]
+}
+
+pub const NEST_CONSTRUCTOR_INJECTION: &str =
+    "In NestJS, inject dependencies through constructor parameters instead of `@Inject()` on properties.";
+pub const NEST_PROPERTY_INJECTION: &str =
+    "In NestJS, inject dependencies with `@Inject()` on properties instead of constructor parameters.";
+pub const ANGULAR_CONSTRUCTOR_INJECTION: &str =
+    "In Angular, inject dependencies through constructor parameters instead of the `inject()` function.";
+pub const ANGULAR_INJECT_FUNCTION: &str =
+    "In Angular, inject dependencies with the `inject()` function instead of constructor parameters.";
+pub const PREFER_INJECTED_SERVICES: &str =
+    "Inject services instead of constructing them with `new`.";
+
+pub const TS_STRICT_NULL: &str = "This code compiles with `strictNullChecks`: handle `null` and `undefined` explicitly; do not silence them with the non-null assertion `!`.";
+/// Confidence of a rule read from compiler settings: the compiler states it,
+/// so it is trusted like a developer saying it outright.
+pub const COMPILER_CONFIDENCE: f32 = 0.95;
 
 pub const PY_PREFER_ABSOLUTE_IMPORTS: &str =
     "In Python, prefer absolute imports of the project's own package (`from app.users import User`) over relative imports (`from .users import User`).";
@@ -89,12 +130,88 @@ pub fn observations(tally: &Tally) -> Vec<Observation> {
     push(&mut found, control_flow(script));
     push(&mut found, decorators(script));
     push(&mut found, errors(script));
+    push(&mut found, validation(script));
+    push(&mut found, schema_types(script));
+    for observation in injection(script) {
+        push(&mut found, Some(observation));
+    }
     let others = python(&tally.python)
         .into_iter()
         .chain(rust(&tally.rust))
         .chain(go(&tally.go));
     for observation in others {
         push(&mut found, Some(observation));
+    }
+    found
+}
+
+/// The validation library at least 80% of validating files use, over at least
+/// [`MIN_FILES`] validating files. A choice between six, so it is not a
+/// [`super::Count`] and does not go through [`choose`].
+fn validation(tally: &ScriptTally) -> Option<Observation> {
+    let total = tally.validating.files;
+    if (total as usize) < MIN_FILES {
+        return None;
+    }
+    Library::ALL
+        .iter()
+        .zip(tally.validation)
+        .find(|(_, count)| meets(count.files, total))
+        .map(|(library, count)| {
+            observed(
+                RuleCategory::Architecture,
+                SCRIPT_SCOPE,
+                validate_with(*library),
+                ratio(count.files, total),
+            )
+        })
+}
+
+/// `z.infer` types over hand-written twins. Only the derived side is a rule:
+/// keeping a second copy of every schema's shape is not a taste to impose.
+fn schema_types(tally: &ScriptTally) -> Option<Observation> {
+    let (_left_wins, ratio) = choose(tally.schema_types, false)?;
+    Some(observed(
+        RuleCategory::Types,
+        TYPESCRIPT_SCOPE,
+        TS_PREFER_Z_INFER,
+        ratio,
+    ))
+}
+
+/// NestJS and Angular injection styles, which are symmetric, and injected
+/// services over ones built with `new`, which is not.
+fn injection(tally: &ScriptTally) -> Vec<Observation> {
+    let mut found = Vec::new();
+    for (count, constructor, other) in [
+        (
+            tally.nest_injection,
+            NEST_CONSTRUCTOR_INJECTION,
+            NEST_PROPERTY_INJECTION,
+        ),
+        (
+            tally.angular_injection,
+            ANGULAR_CONSTRUCTOR_INJECTION,
+            ANGULAR_INJECT_FUNCTION,
+        ),
+    ] {
+        if let Some((left_wins, ratio)) = choose(count, true) {
+            let instruction = if left_wins { constructor } else { other };
+            found.push(observed(
+                RuleCategory::Architecture,
+                TYPESCRIPT_SCOPE,
+                instruction,
+                ratio,
+            ));
+        }
+    }
+    if let Some((_, ratio)) = choose(tally.constructed_services, false) {
+        found.push(observed(
+            RuleCategory::Architecture,
+            TYPESCRIPT_SCOPE,
+            PREFER_INJECTED_SERVICES,
+            ratio,
+        ));
     }
     found
 }
@@ -307,6 +424,22 @@ fn errors(tally: &ScriptTally) -> Option<Observation> {
     ))
 }
 
+/// The strict-null rule for each `tsconfig.json` scope that compiles with it.
+pub fn strict_null_observations(scopes: &[String]) -> Vec<Observation> {
+    scopes
+        .iter()
+        .filter(|scope| validate_scope(scope).is_ok())
+        .map(|scope| {
+            observed(
+                RuleCategory::Types,
+                scope,
+                TS_STRICT_NULL,
+                COMPILER_CONFIDENCE,
+            )
+        })
+        .collect()
+}
+
 fn observed(category: RuleCategory, scope: &str, instruction: &str, ratio: f32) -> Observation {
     Observation::new(category, scope, RuleSource::AstScan, instruction).with_confidence(ratio)
 }
@@ -338,6 +471,18 @@ fn ratio(part: u32, total: u32) -> f32 {
     part as f32 / total as f32
 }
 
+/// Every instruction a rule saying `instruction` cannot coexist with: the
+/// other side of a symmetric choice, or every other validation library.
+pub fn conflicting_instructions(instruction: &str) -> Vec<&'static str> {
+    if VALIDATE_WITH.contains(&instruction) {
+        return VALIDATE_WITH
+            .into_iter()
+            .filter(|other| *other != instruction)
+            .collect();
+    }
+    opposite_instruction(instruction).into_iter().collect()
+}
+
 /// The other side of a symmetric choice, when `instruction` is one we emit.
 ///
 /// A later scan that flips the ratio must not install the opposite rule beside
@@ -352,6 +497,10 @@ pub fn opposite_instruction(instruction: &str) -> Option<&'static str> {
         PREFER_TYPE_ALIAS => PREFER_INTERFACE,
         PREFER_FUNCTION_DECLARATIONS => PREFER_ARROW_FUNCTIONS,
         PREFER_ARROW_FUNCTIONS => PREFER_FUNCTION_DECLARATIONS,
+        NEST_CONSTRUCTOR_INJECTION => NEST_PROPERTY_INJECTION,
+        NEST_PROPERTY_INJECTION => NEST_CONSTRUCTOR_INJECTION,
+        ANGULAR_CONSTRUCTOR_INJECTION => ANGULAR_INJECT_FUNCTION,
+        ANGULAR_INJECT_FUNCTION => ANGULAR_CONSTRUCTOR_INJECTION,
         PY_PREFER_ABSOLUTE_IMPORTS => PY_PREFER_RELATIVE_IMPORTS,
         PY_PREFER_RELATIVE_IMPORTS => PY_PREFER_ABSOLUTE_IMPORTS,
         RS_PREFER_CRATE_PATHS => RS_PREFER_SUPER_PATHS,
@@ -539,5 +688,108 @@ mod tests {
         let instructions: Vec<_> = promoted.iter().map(|o| o.instruction.as_str()).collect();
         assert_eq!(instructions, vec![GO_PREFER_WRAPPED_ERRORS]);
         assert_eq!(promoted[0].scope, "**/*.go");
+    }
+
+    fn validating(libraries: [u32; 6], total: u32) -> Tally {
+        let mut script = ScriptTally::default();
+        for (slot, files) in script.validation.iter_mut().zip(libraries) {
+            *slot = Count {
+                left: files,
+                right: 0,
+                files,
+            };
+        }
+        script.validating = Count {
+            left: 0,
+            right: 0,
+            files: total,
+        };
+        Tally {
+            script,
+            ..Tally::default()
+        }
+    }
+
+    #[test]
+    fn one_validation_library_in_most_validating_files_is_a_rule() {
+        let unanimous = observations(&validating([12, 0, 0, 0, 0, 0], 12));
+        assert_eq!(unanimous.len(), 1);
+        assert_eq!(unanimous[0].instruction, VALIDATE_WITH_ZOD);
+
+        let mixed = observations(&validating([7, 3, 0, 0, 0, 0], 10));
+        assert!(mixed.is_empty(), "70% zod is not a convention");
+
+        let few = observations(&validating([9, 0, 0, 0, 0, 0], 9));
+        assert!(few.is_empty(), "nine validating files are below the floor");
+
+        let decorators = observations(&validating([1, 0, 0, 11, 0, 0], 12));
+        assert_eq!(decorators[0].instruction, VALIDATE_WITH_CLASS_VALIDATOR);
+    }
+
+    #[test]
+    fn validation_libraries_conflict_with_each_other() {
+        let others = conflicting_instructions(VALIDATE_WITH_ZOD);
+        assert_eq!(others.len(), 5);
+        assert!(others.contains(&VALIDATE_WITH_YUP));
+        assert!(!others.contains(&VALIDATE_WITH_ZOD));
+        assert_eq!(
+            conflicting_instructions(PREFER_INTERFACE),
+            vec![PREFER_TYPE_ALIAS]
+        );
+        assert!(conflicting_instructions(PREFER_GUARD_CLAUSES).is_empty());
+    }
+
+    #[test]
+    fn inferred_zod_types_promote_and_hand_written_twins_do_not() {
+        let mut script = ScriptTally {
+            schema_types: files(18, 2, 10),
+            ..ScriptTally::default()
+        };
+        let promoted = observations(&Tally {
+            script,
+            ..Tally::default()
+        });
+        assert_eq!(promoted[0].instruction, TS_PREFER_Z_INFER);
+        assert_eq!(promoted[0].scope, "**/*.{ts,tsx}");
+        script.schema_types = files(2, 18, 10);
+        assert!(observations(&Tally {
+            script,
+            ..Tally::default()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn injection_styles_promote_either_side_and_new_never_does() {
+        let script = ScriptTally {
+            nest_injection: files(40, 2, 12),
+            angular_injection: files(3, 30, 11),
+            constructed_services: files(60, 1, 12),
+            ..ScriptTally::default()
+        };
+        let instructions: Vec<_> = observations(&Tally {
+            script,
+            ..Tally::default()
+        })
+        .into_iter()
+        .map(|o| o.instruction)
+        .collect();
+        assert_eq!(
+            instructions,
+            vec![
+                NEST_CONSTRUCTOR_INJECTION,
+                ANGULAR_INJECT_FUNCTION,
+                PREFER_INJECTED_SERVICES
+            ]
+        );
+        let built = ScriptTally {
+            constructed_services: files(1, 30, 12),
+            ..ScriptTally::default()
+        };
+        assert!(observations(&Tally {
+            script: built,
+            ..Tally::default()
+        })
+        .is_empty());
     }
 }

@@ -393,3 +393,95 @@ fn a_go_test_file_is_scoped_to_test_files() {
     let found = analyze(&before, &after, Path::new("internal/orders/price_test.go")).unwrap();
     assert_eq!(found[0].scope, "internal/**/*_test.go");
 }
+
+/// The non-null-assertion fixture, learned in a project whose tsconfig says `config`.
+fn non_null_in(config: Option<&str>, file: &str, negative: bool) -> Vec<taste_core::Observation> {
+    let dir = tempfile::tempdir().unwrap();
+    if let Some(config) = config {
+        fs::write(dir.path().join("tsconfig.json"), config).unwrap();
+    }
+    let paths = taste_core::config::Paths::for_root(dir.path());
+    let (before, after) = pair_of("typescript/non-null-assertion", "ts", negative);
+    taste_core::analyze_in(&paths, &before, &after, Path::new(file)).unwrap()
+}
+
+const STRICT: &str = "{ \"compilerOptions\": { \"strict\": true } }";
+
+#[test]
+fn a_non_null_assertion_replaced_by_optional_chaining_is_learned_under_strict_null_checks() {
+    let found = non_null_in(Some(STRICT), "src/greet.ts", false);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].instruction.contains("strictNullChecks"));
+    assert_eq!(found[0].anti_pattern.as_deref(), Some("user!.name"));
+    assert!(non_null_in(Some(STRICT), "src/greet.ts", true).is_empty());
+}
+
+#[test]
+fn a_non_null_assertion_removed_without_strict_null_checks_is_not_a_taste() {
+    for config in [None, Some("{\"compilerOptions\":{\"strict\":false}}")] {
+        assert!(
+            non_null_in(config, "src/greet.ts", false).is_empty(),
+            "{config:?}"
+        );
+    }
+    // Without a project to read, analyze() can never tell, so it never reports one.
+    let (before, after) = pair_of("typescript/non-null-assertion", "ts", false);
+    assert!(analyze(&before, &after, Path::new("src/greet.ts"))
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn a_non_null_assertion_replaced_by_an_explicit_check_is_learned() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("tsconfig.json"), STRICT).unwrap();
+    let paths = taste_core::config::Paths::for_root(dir.path());
+    let before = "export function greet(user?: User): string {\n  return user!.name;\n}\n";
+    let after = "export function greet(user?: User): string {\n  if (!user) {\n    return \"guest\";\n  }\n  return user.name;\n}\n";
+    let found = taste_core::analyze_in(&paths, before, after, Path::new("src/greet.ts")).unwrap();
+    assert!(
+        found
+            .iter()
+            .any(|o| o.instruction.contains("strictNullChecks")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_yup_schema_rewritten_with_zod_is_detected() {
+    fires(
+        "typescript/schema-library-swap",
+        "src/users/schema.ts",
+        "zod",
+    );
+}
+
+#[test]
+fn a_schema_moved_to_zod_while_yup_stays_in_the_file_is_not_a_migration() {
+    let before = "import * as yup from 'yup';\nexport const A = yup.object({});\nexport const B = yup.object({});\n";
+    let after = "import * as yup from 'yup';\nimport { z } from 'zod';\nexport const A = z.object({});\nexport const B = yup.object({});\n";
+    let found = analyze(before, after, Path::new("src/schema.ts")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_service_built_with_new_replaced_by_injection_is_detected() {
+    fires(
+        "typescript/new-to-injected",
+        "src/users/users.service.ts",
+        "Inject services",
+    );
+}
+
+#[test]
+fn an_angular_service_moved_to_inject_is_detected() {
+    let before = "import { Component } from '@angular/core';\nimport { CartService } from '../cart.service';\n@Component({ selector: 'app-cart' })\nexport class CartComponent {\n  private cart = new CartService();\n}\n";
+    let after = "import { Component, inject } from '@angular/core';\nimport { CartService } from '../cart.service';\n@Component({ selector: 'app-cart' })\nexport class CartComponent {\n  private cart = inject(CartService);\n}\n";
+    let found = analyze(before, after, Path::new("src/app/cart.component.ts")).unwrap();
+    assert!(
+        found
+            .iter()
+            .any(|o| o.instruction.contains("Inject services")),
+        "{found:?}"
+    );
+}

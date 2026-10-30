@@ -18,11 +18,17 @@ pub fn report_scan(report: &ScanReport, out: &Output) {
         plural(report.files_scanned),
         report.files_skipped
     ));
-    if report.outcomes.is_empty() {
+    if report.outcomes.is_empty() && report.retracted.is_empty() {
         out.say("No new rules: no pattern cleared the 80% / 10-file floor.");
     }
     for outcome in &report.outcomes {
         out.say(format!("  {}", describe_outcome(outcome)));
+    }
+    for rule in &report.retracted {
+        out.say(format!(
+            "  retracted  {} ({}): its compiler setting is gone.",
+            rule.id, rule.scope
+        ));
     }
 }
 

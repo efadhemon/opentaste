@@ -87,6 +87,7 @@ pub fn run(cwd: &Path, out: &Output) -> anyhow::Result<()> {
         .iter()
         .all(|(_, step)| !matches!(step, Step::Changed(_)))
         && scanned.outcomes.is_empty()
+        && scanned.retracted.is_empty()
         && synced.is_empty();
     if !fresh && untouched {
         out.say("Nothing to do: this project was already fully set up.");

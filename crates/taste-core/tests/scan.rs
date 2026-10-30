@@ -5,8 +5,9 @@ mod common;
 use common::Project;
 use taste_core::ast::stored_tally;
 use taste_core::ast::{
-    GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
-    RS_PREFER_QUESTION_MARK,
+    COMPILER_CONFIDENCE, GO_PREFER_WRAPPED_ERRORS, NEST_CONSTRUCTOR_INJECTION,
+    PREFER_INJECTED_SERVICES, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
+    RS_PREFER_QUESTION_MARK, TS_STRICT_NULL, VALIDATE_WITH_ZOD,
 };
 use taste_core::scan;
 
@@ -497,4 +498,179 @@ fn a_typescript_python_and_go_repository_keeps_every_languages_rules_apart() {
             "{instruction}"
         );
     }
+}
+
+#[test]
+fn strict_null_checks_become_a_rule_per_strict_package() {
+    let project = Project::with_cache_db();
+    project.write(
+        "tsconfig.base.json",
+        "{\n  // shared\n  \"compilerOptions\": { \"strict\": true, },\n}\n",
+    );
+    project.write(
+        "apps/web/tsconfig.json",
+        "{ \"extends\": \"../../tsconfig.base.json\" }",
+    );
+    project.write(
+        "apps/legacy/tsconfig.json",
+        "{ \"extends\": \"../../tsconfig.base.json\", \"compilerOptions\": { \"strictNullChecks\": false } }",
+    );
+    project.write("apps/web/src/a.ts", "export const a = 1;\n");
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .filter(|rule| rule.instruction == TS_STRICT_NULL)
+        .collect();
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].scope, "apps/web/**/*.{ts,tsx}");
+    assert_eq!(rules[0].confidence, COMPILER_CONFIDENCE);
+    assert_eq!(
+        report.files_scanned, 1,
+        "tsconfig files are read, not counted"
+    );
+}
+
+#[test]
+fn turning_strict_null_checks_off_retracts_the_rule_and_turning_them_on_restores_it() {
+    let project = Project::with_cache_db();
+    let strict = "{ \"compilerOptions\": { \"strict\": true } }";
+    project.write("tsconfig.json", strict);
+    let strict_rules = |project: &Project| {
+        project
+            .store
+            .rules()
+            .unwrap()
+            .rules
+            .into_iter()
+            .filter(|rule| rule.instruction == TS_STRICT_NULL)
+            .map(|rule| rule.scope)
+            .collect::<Vec<_>>()
+    };
+    scan(&project.store).unwrap();
+    assert_eq!(strict_rules(&project), vec!["**/*.{ts,tsx}"]);
+
+    project.write(
+        "tsconfig.json",
+        "{ \"compilerOptions\": { \"strict\": false } }",
+    );
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.retracted.len(), 1);
+    assert!(strict_rules(&project).is_empty());
+
+    project.write("tsconfig.json", strict);
+    scan(&project.store).unwrap();
+    assert_eq!(
+        strict_rules(&project),
+        vec!["**/*.{ts,tsx}"],
+        "retracting is not rejecting"
+    );
+}
+
+#[test]
+fn a_project_without_strict_null_checks_gets_no_rule() {
+    let project = Project::with_cache_db();
+    project.write(
+        "tsconfig.json",
+        "{ \"compilerOptions\": { \"target\": \"es2022\" } }",
+    );
+    let report = scan(&project.store).unwrap();
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .all(|rule| rule.instruction != TS_STRICT_NULL));
+}
+
+fn write_validators(project: &Project, zod: usize, yup: usize) {
+    for index in 0..zod {
+        project.write(
+            &format!("src/schemas/zod{index}.ts"),
+            "import { z } from 'zod';\nexport const S = z.object({ a: z.string() });\n",
+        );
+    }
+    for index in 0..yup {
+        project.write(
+            &format!("src/schemas/yup{index}.ts"),
+            "import * as yup from 'yup';\nexport const S = yup.object({ a: yup.string() });\n",
+        );
+    }
+}
+
+fn promoted_instructions(report: &taste_core::ScanReport) -> Vec<String> {
+    report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .map(|rule| rule.instruction.clone())
+        .collect()
+}
+
+#[test]
+fn a_codebase_validating_with_zod_gets_a_zod_rule() {
+    let project = Project::with_cache_db();
+    write_validators(&project, 10, 0);
+    // Files that validate nothing do not dilute the ratio.
+    for index in 0..20 {
+        project.write(&format!("src/plain{index}.ts"), "export const x = 1;\n");
+    }
+    let report = scan(&project.store).unwrap();
+    assert!(promoted_instructions(&report).contains(&VALIDATE_WITH_ZOD.to_string()));
+}
+
+#[test]
+fn mixed_or_too_few_validating_files_get_no_validation_rule() {
+    for (zod, yup) in [(7, 3), (9, 0)] {
+        let project = Project::with_cache_db();
+        write_validators(&project, zod, yup);
+        let report = scan(&project.store).unwrap();
+        let instructions = promoted_instructions(&report);
+        assert!(
+            !instructions.iter().any(|i| i.starts_with("Validate input")),
+            "{zod} zod, {yup} yup: {instructions:?}"
+        );
+    }
+}
+
+#[test]
+fn a_nest_codebase_injecting_through_constructors_gets_its_rules() {
+    let project = Project::with_cache_db();
+    for index in 0..10 {
+        project.write(
+            &format!("src/m{index}/m{index}.service.ts"),
+            "import { Injectable } from '@nestjs/common';\nimport { Repo } from './repo';\n@Injectable()\nexport class S {\n  constructor(private readonly a: ARepository, private readonly b: BService) {}\n}\n",
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    let instructions = promoted_instructions(&report);
+    for expected in [NEST_CONSTRUCTOR_INJECTION, PREFER_INJECTED_SERVICES] {
+        assert!(
+            instructions.contains(&expected.to_string()),
+            "{expected}: {instructions:?}"
+        );
+    }
+    assert_eq!(report.tallies.script.angular_injection.files, 0);
+}
+
+#[test]
+fn a_mixed_angular_codebase_gets_no_injection_style_rule() {
+    let project = Project::with_cache_db();
+    for index in 0..10 {
+        let member = if index < 7 {
+            "  private readonly http = inject(HttpClient);\n"
+        } else {
+            "  constructor(private http: HttpClient) {}\n"
+        };
+        project.write(
+            &format!("src/app/c{index}.component.ts"),
+            &format!("import {{ Component, inject }} from '@angular/core';\n@Component({{ selector: 'c' }})\nexport class C {{\n{member}}}\n"),
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    let instructions = promoted_instructions(&report);
+    assert!(
+        !instructions.iter().any(|i| i.starts_with("In Angular")),
+        "70% inject() is not a convention: {instructions:?}"
+    );
 }

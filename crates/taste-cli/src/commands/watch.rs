@@ -88,6 +88,13 @@ pub fn relevance(paths: &Paths, relative: &Path, new_dir: bool) -> Relevance {
             Relevance::Source
         };
     }
+    // The scan reads strict null checks from it.
+    if relative
+        .file_name()
+        .is_some_and(|name| name == taste_core::ast::tsconfig::TSCONFIG)
+    {
+        return Relevance::Source;
+    }
     match SupportedLanguage::from_path(relative) {
         Some(lang) if lang.has_analyzers() => Relevance::Source,
         _ => Relevance::Ignore,
@@ -208,6 +215,9 @@ fn act(store: &RuleStore, out: &Output, source: bool, rules: bool) -> anyhow::Re
         for outcome in &report.outcomes {
             out.say(format!("  {}", crate::commands::describe_outcome(outcome)));
         }
+        for rule in &report.retracted {
+            out.say(format!("  retracted  {} ({})", rule.id, rule.scope));
+        }
     } else if rules {
         out.say(format!("[{stamp}] .taste/rules.json changed; syncing"));
     }
@@ -251,6 +261,7 @@ mod tests {
         assert_eq!(rel("app/users.py"), Relevance::Source);
         assert_eq!(rel("src/lib.rs"), Relevance::Source);
         assert_eq!(rel("cmd/main.go"), Relevance::Source);
+        assert_eq!(rel("apps/web/tsconfig.json"), Relevance::Source);
         assert_eq!(
             rel("src/Main.java"),
             Relevance::Ignore,

@@ -19,7 +19,7 @@ use rayon::prelude::*;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::models::ProjectContext;
+use crate::models::{ProjectContext, RuleSource, TasteRule};
 use crate::storage::{FileSnapshot, Outcome, RuleStore};
 
 use crate::models::rule_id;
@@ -27,6 +27,7 @@ use crate::models::rule_id;
 use super::analyzers::{decode_tally, encode_tally};
 use super::parser::content_hash;
 use super::promote;
+use super::tsconfig;
 use super::{analyze_source, is_test_or_script, SupportedLanguage, Tally};
 
 /// Files larger than this are skipped. 256 KiB is several thousand lines,
@@ -49,6 +50,10 @@ pub struct ScanReport {
     pub tallies: Tally,
     /// Outcomes of the observations this scan recorded.
     pub outcomes: Vec<Outcome>,
+    /// Rules read from configuration whose setting is gone, removed by this
+    /// scan. A ratio never retracts a rule; a compiler setting is a fact, so
+    /// when it changes the rule goes with it.
+    pub retracted: Vec<TasteRule>,
 }
 
 struct PendingFile {
@@ -66,6 +71,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     let mut files_skipped = 0usize;
     let mut unchanged = 0usize;
     let mut seen = HashSet::new();
+    let mut tsconfigs = Vec::new();
 
     for entry in WalkBuilder::new(root)
         .standard_filters(true)
@@ -81,6 +87,13 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
             continue;
         };
         let path = entry.path();
+        if path
+            .file_name()
+            .is_some_and(|name| name == tsconfig::TSCONFIG)
+        {
+            tsconfigs.push(PathBuf::from(relative_key(root, path)));
+            continue;
+        }
         // Checked before anything is read: a language with no analyzers would
         // be read, hashed, parsed and snapshotted for no counts at all.
         let Some(lang) = SupportedLanguage::from_path(path).filter(|lang| lang.has_analyzers())
@@ -153,8 +166,21 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         last_updated: Utc::now(),
     })?;
 
+    let strict_scopes = tsconfig::strict_scopes(root, &tsconfigs);
+    let mut retracted = Vec::new();
+    for rule in store.rules()?.rules {
+        let stale = rule.source == RuleSource::AstScan
+            && rule.instruction == promote::TS_STRICT_NULL
+            && !strict_scopes.contains(&rule.scope);
+        if stale && store.retract_rule(&rule.id)? {
+            retracted.push(rule);
+        }
+    }
     let mut outcomes = Vec::new();
-    for observation in promote::observations(&tallies) {
+    let found = promote::observations(&tallies)
+        .into_iter()
+        .chain(promote::strict_null_observations(&strict_scopes));
+    for observation in found {
         if already_recorded(store, &observation)? {
             continue;
         }
@@ -177,6 +203,7 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         files_skipped,
         tallies,
         outcomes,
+        retracted,
     })
 }
 
@@ -272,7 +299,7 @@ fn already_recorded(store: &RuleStore, observation: &crate::storage::Observation
     if store.rules()?.find(&id).is_some() {
         return Ok(true);
     }
-    if let Some(opposite) = promote::opposite_instruction(&observation.instruction) {
+    for opposite in promote::conflicting_instructions(&observation.instruction) {
         let opposite_id = rule_id(observation.category, &observation.scope, opposite);
         if store.rules()?.find(&opposite_id).is_some() {
             return Ok(true);
@@ -316,7 +343,7 @@ fn detect_stack(root: &Path) -> Vec<String> {
 
 /// Directories of a JavaScript monorepo's workspace packages, from
 /// `workspaces` in the root `package.json` and from `pnpm-workspace.yaml`.
-fn workspace_packages(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn workspace_packages(root: &Path) -> Vec<PathBuf> {
     let mut patterns = Vec::new();
     if let Ok(text) = fs::read_to_string(root.join("package.json")) {
         if let Ok(value) = serde_json::from_str::<Value>(&text) {
