@@ -145,35 +145,59 @@ fn render_block(body: &str) -> String {
 }
 
 /// Find the first complete marker pair in `normalized` (LF-only) content.
+///
+/// A marker only counts on a line of its own, outside fenced code. That is
+/// how OpenTaste writes it, and it keeps a document that *talks about* the
+/// markers (`AGENTS.md` warns "do not edit between `<!-- OPENTASTE:START -->`
+/// and …" mid-sentence, a README shows one in a code block) from having the
+/// text between two mentions replaced.
 fn locate_block(normalized: &str, path: &Path) -> Result<Option<BlockSpan>> {
-    let Some(start) = normalized.find(START_PREFIX) else {
-        // A closing marker with nothing to close is just as broken as the
-        // reverse, and just as unsafe to repair by guessing.
-        if normalized.contains(END_MARKER) {
-            return Err(Error::MalformedMarkers {
-                path: path.to_path_buf(),
-            });
+    let malformed = || Error::MalformedMarkers {
+        path: path.to_path_buf(),
+    };
+    let mut start = None;
+    let mut fence: Option<&str> = None;
+    let mut offset = 0;
+    for line in normalized.split_inclusive('\n') {
+        let line_start = offset;
+        offset += line.len();
+        let trimmed = line.trim();
+        let indent = line.len() - line.trim_start().len();
+        if let Some(open) = fence {
+            if trimmed.starts_with(open) {
+                fence = None;
+            }
+            continue;
         }
-        return Ok(None);
-    };
-
-    // The opening marker is an HTML comment; it must actually be closed.
-    let Some(start_marker_end) = normalized[start..].find("-->").map(|i| start + i + 3) else {
-        return Err(Error::MalformedMarkers {
-            path: path.to_path_buf(),
-        });
-    };
-
-    let Some(end_offset) = normalized[start_marker_end..].find(END_MARKER) else {
-        return Err(Error::MalformedMarkers {
-            path: path.to_path_buf(),
-        });
-    };
-
-    Ok(Some(BlockSpan {
-        start,
-        end: start_marker_end + end_offset + END_MARKER.len(),
-    }))
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = Some(&trimmed[..3]);
+            continue;
+        }
+        if trimmed.starts_with(START_PREFIX) {
+            // The opening marker is an HTML comment; it must actually be closed.
+            if !trimmed.ends_with("-->") || start.is_some() {
+                if start.is_some() {
+                    continue;
+                }
+                return Err(malformed());
+            }
+            start = Some(line_start + indent);
+        } else if trimmed == END_MARKER {
+            // A closing marker with nothing to close is just as broken as the
+            // reverse, and just as unsafe to repair by guessing.
+            let Some(start) = start else {
+                return Err(malformed());
+            };
+            return Ok(Some(BlockSpan {
+                start,
+                end: line_start + indent + END_MARKER.len(),
+            }));
+        }
+    }
+    match start {
+        Some(_) => Err(malformed()),
+        None => Ok(None),
+    }
 }
 
 /// Replace an existing block in place, preserving surrounding content exactly.
@@ -448,5 +472,24 @@ mod tests {
             "a file holding nothing but our block should not be left behind empty"
         );
         assert!(!clear_block(&path).unwrap());
+    }
+
+    #[test]
+    fn markers_mentioned_in_prose_or_code_are_not_a_block() {
+        let existing = "# Guide\n\n> Do not edit between `<!-- OPENTASTE:START -->` and\n> `<!-- OPENTASTE:END -->` in this file.\n\n```markdown\n<!-- OPENTASTE:START -->\nexample\n<!-- OPENTASTE:END -->\n```\n\nMore prose.\n";
+        assert!(!has_block(existing));
+        let out = inject(existing, "- Rule", p()).unwrap();
+        assert!(
+            out.starts_with(existing.trim_end()),
+            "the document is untouched: {out}"
+        );
+        assert!(
+            out.ends_with(&format!("{START_MARKER}\n\n- Rule\n\n{END_MARKER}\n")),
+            "{out}"
+        );
+        // And the next sync finds the block it appended, not the mentions.
+        let again = inject(&out, "- Rule", p()).unwrap();
+        assert_eq!(again, out);
+        assert_eq!(strip(&out, p()).unwrap().unwrap(), existing);
     }
 }
