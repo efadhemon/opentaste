@@ -24,7 +24,7 @@ before it is reliable.
 | --- | --- | --- | --- |
 | M1 | Scanner learns from "existing source files **and recent Git history**" (§1) | Only the working tree is scanned. `taste learn --from-git-head` sees the last commit only. | `ast/scan.rs`, `commands/learn.rs` |
 | M2 | Parser and analyzers for **TS/JS, Python, Rust, Go** (§2, §10 phase 3) | All four grammars parse, but every analyzer and every diff detector returns nothing unless `is_script()`. Python, Rust and Go teach nothing. | `ast/analyzers/mod.rs:189`, `diff/structural.rs:64` **Fixed in phase 8 steps 2–4.** |
-| M3 | `types.rs`: **strict null checks** | Not detected | `ast/analyzers/types.rs` |
+| M3 | `types.rs`: **strict null checks** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 1.** |
 | M4 | `types.rs`: **zod schemas** | Not detected | `ast/analyzers/types.rs` |
 | M5 | `arch.rs`: **DI patterns** | Not detected | `ast/analyzers/arch.rs` |
 | M6 | **`~/.taste/global.db`**, cross-project rules (§2, §4.3) | `Paths::global_db()` exists; nothing reads or writes the file | `config.rs:90` |

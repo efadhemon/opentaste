@@ -1,6 +1,6 @@
 # Phase 9: The missing TypeScript detectors
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -22,22 +22,49 @@ that reason instead of ignoring it.
 signal." True, which makes it the most certain signal OpenTaste can have: the
 compiler enforces it. It is read from configuration, not counted.
 
-- [ ] Read `compilerOptions.strict` and `compilerOptions.strictNullChecks`
+- [x] Read `compilerOptions.strict` and `compilerOptions.strictNullChecks`
       from each package's `tsconfig.json`, following `extends` within the
       repository (not into `node_modules`). `strictNullChecks` overrides
-      `strict`.
-- [ ] When it is on, record a scan observation, category `types`, scoped to
+      `strict`. (`ast/tsconfig.rs`. "Within the repository" includes the
+      repository's own workspace packages by name, `"extends":
+      "@acme/tsconfig/base.json"`, which is how create-t3-turbo and most
+      Turborepo setups share a base; without it they got no rule. A base from
+      an installed package makes the answer unknown unless the file sets
+      `strictNullChecks` itself, because the base could turn it off under
+      `strict`.)
+- [x] When it is on, record a scan observation, category `types`, scoped to
       that package's TypeScript files: "This code compiles with
       `strictNullChecks`: handle `null` and `undefined` explicitly; do not
       silence them with the non-null assertion `!`." Confidence 0.95, the
       same trust as an explicit statement, because the compiler states it.
-- [ ] When it is off, record nothing. A missing setting is not a preference.
-- [ ] Diff detector: a non-null assertion `x!.y` replaced by `x?.y` or an
-      explicit check, in a project with strict null checks on.
-- [ ] Tests: `strict: true`; `strict: true` with `strictNullChecks: false`
+      (When every `tsconfig.json` in the repository is strict, one
+      project-wide rule replaces a line per package; a package is skipped when
+      a nested `tsconfig.json` under it disagrees, since its scope would
+      cover those files.)
+- [x] When it is off, record nothing. A missing setting is not a preference.
+      *Added:* when it is turned off, `taste scan` retracts the rule it
+      recorded (`RuleStore::retract_rule`, which removes without rejecting,
+      so turning it on again restores the rule). A ratio never retracts a
+      rule; a compiler setting is a fact.
+- [x] Diff detector: a non-null assertion `x!.y` replaced by `x?.y` or an
+      explicit check, in a project with strict null checks on. (`analyze_in`
+      reads the file's nearest `tsconfig.json`; plain `analyze`, which has no
+      project, never reports it.)
+- [x] Tests: `strict: true`; `strict: true` with `strictNullChecks: false`
       (off); an `extends` chain; two packages with different settings get
       two scopes; JSON with comments (tsconfig allows them); the diff
       detector's positive and negative.
+- [x] `taste watch` rescans when a `tsconfig.json` changes.
+
+Checked on create-t3-turbo (one project-wide rule, from eleven packages that
+all extend the workspace's `@acme/tsconfig`), full-stack-fastapi-template
+(two package scopes) and OpenTaste.
+
+**Found while checking:** running `taste init` on this repository showed
+that the marker splicer took the mention of `<!-- OPENTASTE:START -->` in
+AGENTS.md's own prose for a block and replaced the text up to the next
+mention. Markers now count only on their own line outside fenced code
+(`transpiler/marker.rs`).
 
 ## Step 2: Zod schemas (M4)
 

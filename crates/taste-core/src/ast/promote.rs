@@ -39,6 +39,11 @@ pub const PREFER_CUSTOM_DECORATORS: &str =
     "Prefer project-specific decorators over framework decorators such as `@Entity` and `@Injectable`.";
 pub const PREFER_CUSTOM_ERRORS: &str = "Prefer custom error classes over throwing bare `Error`.";
 
+pub const TS_STRICT_NULL: &str = "This code compiles with `strictNullChecks`: handle `null` and `undefined` explicitly; do not silence them with the non-null assertion `!`.";
+/// Confidence of a rule read from compiler settings: the compiler states it,
+/// so it is trusted like a developer saying it outright.
+pub const COMPILER_CONFIDENCE: f32 = 0.95;
+
 pub const PY_PREFER_ABSOLUTE_IMPORTS: &str =
     "In Python, prefer absolute imports of the project's own package (`from app.users import User`) over relative imports (`from .users import User`).";
 pub const PY_PREFER_RELATIVE_IMPORTS: &str =
@@ -305,6 +310,22 @@ fn errors(tally: &ScriptTally) -> Option<Observation> {
         PREFER_CUSTOM_ERRORS,
         ratio,
     ))
+}
+
+/// The strict-null rule for each `tsconfig.json` scope that compiles with it.
+pub fn strict_null_observations(scopes: &[String]) -> Vec<Observation> {
+    scopes
+        .iter()
+        .filter(|scope| validate_scope(scope).is_ok())
+        .map(|scope| {
+            observed(
+                RuleCategory::Types,
+                scope,
+                TS_STRICT_NULL,
+                COMPILER_CONFIDENCE,
+            )
+        })
+        .collect()
 }
 
 fn observed(category: RuleCategory, scope: &str, instruction: &str, ratio: f32) -> Observation {

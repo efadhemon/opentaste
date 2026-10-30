@@ -363,6 +363,24 @@ impl RuleStore {
         Ok(true)
     }
 
+    /// Remove a rule whose evidence is gone, from both the confirmed file and
+    /// the candidate cache, *without* remembering it as rejected: the next
+    /// scan that finds the evidence again records it again. This is for rules
+    /// read from configuration, such as strict null checks when a
+    /// `tsconfig.json` turns them off.
+    ///
+    /// Returns `false` when no rule or candidate carries that identifier.
+    pub fn retract_rule(&self, id: &str) -> Result<bool> {
+        let _guard = self.lock()?;
+        let mut rules = self.json.load()?;
+        let removed_rule = rules.remove(id).is_some();
+        if removed_rule {
+            self.json.save(&rules)?;
+        }
+        let removed_candidate = self.candidates.delete_candidate(id)?;
+        Ok(removed_rule || removed_candidate)
+    }
+
     /// Remove a rule entirely, from both the confirmed file and the candidate
     /// cache, so it cannot immediately reappear.
     ///

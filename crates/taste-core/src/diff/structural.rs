@@ -15,6 +15,7 @@ use std::path::Path;
 
 use tree_sitter::{Node, Tree};
 
+use crate::ast::TS_STRICT_NULL;
 use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
     node_text, parse, unquote, Family, ScriptQuery, SupportedLanguage,
@@ -58,7 +59,17 @@ const ROLES: &[&str] = &[
 ///
 /// `path` is the project-relative file the edit belongs to. The scope glob is
 /// derived from it (`src/users/user.entity.ts` becomes `src/**/*.entity.ts`).
+///
+/// A non-null assertion removed is only a taste in a project that compiles
+/// with `strictNullChecks`, which this function cannot see, so it never
+/// reports one; [`analyze_in`] does when the file's `tsconfig.json` says so.
 pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<Vec<Observation>> {
+    let mut found = detect_all(before, after, path)?;
+    found.retain(|observation| observation.instruction != TS_STRICT_NULL);
+    Ok(found)
+}
+
+fn detect_all(before: &str, after: &str, path: &Path) -> crate::error::Result<Vec<Observation>> {
     let Some(lang) = SupportedLanguage::from_path(path) else {
         return Ok(Vec::new());
     };
@@ -109,6 +120,7 @@ const DETECTORS: &[&dyn Detector] = &[
     &FunctionSyntax,
     &ErrorClass,
     &ControlFlow,
+    &NonNullAssertion,
 ];
 
 struct DecoratorSwap;
@@ -118,6 +130,7 @@ struct TypeSwap;
 struct FunctionSyntax;
 struct ErrorClass;
 struct ControlFlow;
+struct NonNullAssertion;
 
 impl Detector for DecoratorSwap {
     fn detect(
@@ -348,6 +361,127 @@ impl Detector for ErrorClass {
             ));
         }
         None
+    }
+}
+
+/// `user!.name` replaced by `user?.name`, or by `user.name` once a null
+/// check on `user` has been added.
+impl Detector for NonNullAssertion {
+    fn detect(
+        &self,
+        before_tree: &Tree,
+        before_src: &str,
+        after_tree: &Tree,
+        after_src: &str,
+        path: &Path,
+    ) -> Option<Observation> {
+        let after_asserted = asserted_members(after_tree, after_src);
+        let after_checks = null_checks(after_tree, after_src);
+        let before_checks = null_checks(before_tree, before_src);
+        for (object, property, text) in asserted_members(before_tree, before_src) {
+            if after_asserted.iter().any(|(_, _, kept)| *kept == text) {
+                continue;
+            }
+            let optional = format!("{object}?.{property}");
+            let replacement = member_texts(after_tree, after_src)
+                .into_iter()
+                .find(|member| {
+                    squash(member) == squash(&optional)
+                        || (squash(member) == squash(&format!("{object}.{property}"))
+                            && after_checks.contains(&squash(&object))
+                            && !before_checks.contains(&squash(&object)))
+                });
+            let Some(replacement) = replacement else {
+                continue;
+            };
+            return Some(observation(
+                RuleCategory::Types,
+                path,
+                TS_STRICT_NULL,
+                text,
+                replacement,
+            ));
+        }
+        None
+    }
+}
+
+/// `(object, property, text)` of every `object!.property`.
+fn asserted_members(tree: &Tree, source: &str) -> Vec<(String, String, String)> {
+    let mut found = Vec::new();
+    for_each_node(tree.root_node(), &mut |node| {
+        if node.kind() != "member_expression" {
+            return;
+        }
+        let (Some(object), Some(property)) = (
+            node.child_by_field_name("object"),
+            node.child_by_field_name("property"),
+        ) else {
+            return;
+        };
+        if object.kind() != "non_null_expression" {
+            return;
+        }
+        let Some(inner) = object.named_child(0) else {
+            return;
+        };
+        found.push((
+            node_text(inner, source).to_string(),
+            node_text(property, source).to_string(),
+            node_text(node, source).to_string(),
+        ));
+    });
+    found
+}
+
+fn member_texts(tree: &Tree, source: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for_each_node(tree.root_node(), &mut |node| {
+        if node.kind() == "member_expression" {
+            found.push(node_text(node, source).to_string());
+        }
+    });
+    found
+}
+
+/// The expressions some `if` checks for null or undefined: `!x`,
+/// `x == null`, `x === undefined`, `x !== null`.
+fn null_checks(tree: &Tree, source: &str) -> HashSet<String> {
+    let mut found = HashSet::new();
+    for_each_node(tree.root_node(), &mut |node| {
+        if node.kind() != "if_statement" {
+            return;
+        }
+        let Some(condition) = node.child_by_field_name("condition") else {
+            return;
+        };
+        let text = squash(node_text(condition, source));
+        let text = text.trim_start_matches('(').trim_end_matches(')');
+        if let Some(subject) = text.strip_prefix('!') {
+            found.insert(subject.to_string());
+            return;
+        }
+        for operator in ["===", "!==", "==", "!="] {
+            if let Some((subject, value)) = text.split_once(operator) {
+                if matches!(value, "null" | "undefined") {
+                    found.insert(subject.to_string());
+                }
+                return;
+            }
+        }
+    });
+    found
+}
+
+fn squash(text: &str) -> String {
+    text.split_whitespace().collect()
+}
+
+fn for_each_node<'a>(node: Node<'a>, visit: &mut dyn FnMut(Node<'a>)) {
+    visit(node);
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        for_each_node(child, visit);
     }
 }
 
@@ -589,7 +723,15 @@ pub fn analyze_in(
     after: &str,
     path: &Path,
 ) -> crate::error::Result<Vec<Observation>> {
-    let mut observations = analyze(before, after, path)?;
+    let mut observations = detect_all(before, after, path)?;
+    let strict = || {
+        crate::ast::tsconfig::nearest_tsconfig(&paths.project_root, path).is_some_and(|config| {
+            crate::ast::tsconfig::strict_null_checks(&paths.project_root, &config) == Some(true)
+        })
+    };
+    if observations.iter().any(|o| o.instruction == TS_STRICT_NULL) && !strict() {
+        observations.retain(|observation| observation.instruction != TS_STRICT_NULL);
+    }
     if let Some(package) = scope_root(paths, path) {
         for observation in &mut observations {
             observation.scope = package_scope(&observation.scope, &package);

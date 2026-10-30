@@ -5,8 +5,8 @@ mod common;
 use common::Project;
 use taste_core::ast::stored_tally;
 use taste_core::ast::{
-    GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
-    RS_PREFER_QUESTION_MARK,
+    COMPILER_CONFIDENCE, GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS,
+    PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK, TS_STRICT_NULL,
 };
 use taste_core::scan;
 
@@ -497,4 +497,87 @@ fn a_typescript_python_and_go_repository_keeps_every_languages_rules_apart() {
             "{instruction}"
         );
     }
+}
+
+#[test]
+fn strict_null_checks_become_a_rule_per_strict_package() {
+    let project = Project::with_cache_db();
+    project.write(
+        "tsconfig.base.json",
+        "{\n  // shared\n  \"compilerOptions\": { \"strict\": true, },\n}\n",
+    );
+    project.write(
+        "apps/web/tsconfig.json",
+        "{ \"extends\": \"../../tsconfig.base.json\" }",
+    );
+    project.write(
+        "apps/legacy/tsconfig.json",
+        "{ \"extends\": \"../../tsconfig.base.json\", \"compilerOptions\": { \"strictNullChecks\": false } }",
+    );
+    project.write("apps/web/src/a.ts", "export const a = 1;\n");
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .filter(|rule| rule.instruction == TS_STRICT_NULL)
+        .collect();
+    assert_eq!(rules.len(), 1, "{rules:?}");
+    assert_eq!(rules[0].scope, "apps/web/**/*.{ts,tsx}");
+    assert_eq!(rules[0].confidence, COMPILER_CONFIDENCE);
+    assert_eq!(
+        report.files_scanned, 1,
+        "tsconfig files are read, not counted"
+    );
+}
+
+#[test]
+fn turning_strict_null_checks_off_retracts_the_rule_and_turning_them_on_restores_it() {
+    let project = Project::with_cache_db();
+    let strict = "{ \"compilerOptions\": { \"strict\": true } }";
+    project.write("tsconfig.json", strict);
+    let strict_rules = |project: &Project| {
+        project
+            .store
+            .rules()
+            .unwrap()
+            .rules
+            .into_iter()
+            .filter(|rule| rule.instruction == TS_STRICT_NULL)
+            .map(|rule| rule.scope)
+            .collect::<Vec<_>>()
+    };
+    scan(&project.store).unwrap();
+    assert_eq!(strict_rules(&project), vec!["**/*.{ts,tsx}"]);
+
+    project.write(
+        "tsconfig.json",
+        "{ \"compilerOptions\": { \"strict\": false } }",
+    );
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.retracted.len(), 1);
+    assert!(strict_rules(&project).is_empty());
+
+    project.write("tsconfig.json", strict);
+    scan(&project.store).unwrap();
+    assert_eq!(
+        strict_rules(&project),
+        vec!["**/*.{ts,tsx}"],
+        "retracting is not rejecting"
+    );
+}
+
+#[test]
+fn a_project_without_strict_null_checks_gets_no_rule() {
+    let project = Project::with_cache_db();
+    project.write(
+        "tsconfig.json",
+        "{ \"compilerOptions\": { \"target\": \"es2022\" } }",
+    );
+    let report = scan(&project.store).unwrap();
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .all(|rule| rule.instruction != TS_STRICT_NULL));
 }
