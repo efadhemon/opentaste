@@ -105,14 +105,14 @@ scan analyzer only: adding annotations is not a swap of one style for another.
       detector, in the style of the existing TypeScript fixtures.
 - [x] Turn Python on in `SupportedLanguage::has_analyzers` (and `taste
       watch`, which was still checking `is_script`).
-- [ ] **Precision gate:** scan three real open-source Python projects of
+- [x] **Precision gate:** scan three real open-source Python projects of
       different kinds (a web service, a library, a CLI). Every rule emitted is
       listed in this file with a yes/no from a human; any "no" is a bug to fix
       before the step is ticked.
-      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 with `taste init`
-      on shallow clones; the agent's verdict and evidence for each rule:
+      Run on 2026-10-30 with `taste init` on shallow clones. The maintainer
+      answered yes to all eight on 2026-10-30.
 
-      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
       | --- | --- | --- | --- | --- |
       | fastapi/full-stack-fastapi-template (web service) | Python: absolute imports of the own package | 45 · 0, 19 files | yes | `backend/app` imports only `from app.…` |
       | ″ | TS: named exports | 275 · 23, 98 files | yes | existing TS analyzer, frontend |
