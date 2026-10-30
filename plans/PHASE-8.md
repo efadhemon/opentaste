@@ -144,11 +144,12 @@ scan analyzer only: adding annotations is not a swap of one style for another.
       `let … else`. (`diff/rust.rs`, same exclusions as the scan.)
 - [x] Fixtures under `tests/fixtures/rust/`.
 - [x] Turn Rust on in `has_analyzers`.
-- [ ] **Precision gate:** three real Rust projects (a library, a CLI, a web
+- [x] **Precision gate:** three real Rust projects (a library, a CLI, a web
       service). OpenTaste itself may be one of them.
-      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 on shallow clones.
+      Run on 2026-10-30 on shallow clones. The maintainer answered yes to all
+      ten on 2026-10-30.
 
-      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
       | --- | --- | --- | --- | --- |
       | BurntSushi/ripgrep (CLI) | Rust: `?` over unwrap/expect | 476 · 79, 45 files | yes | library crates propagate; binary files not counted |
       | ″ | Rust: `crate::` over `super::` | 59 · 2, 48 files | yes | |
