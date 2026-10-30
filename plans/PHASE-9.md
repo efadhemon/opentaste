@@ -1,6 +1,6 @@
 # Phase 9: The missing TypeScript detectors
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -95,10 +95,10 @@ convention.
 - [x] Tests: unanimous zod; mixed zod/yup below 80%; 9 files (below the
       floor); `z.infer` counting; a file that only imports types from zod
       counts nothing.
-- [ ] **Zod precision gate** (Definition of done). *Awaiting the
-      maintainer's yes/no.* documenso/documenso, 2026-10-30:
+- [x] **Zod precision gate** (Definition of done). documenso/documenso,
+      2026-10-30. The maintainer answered yes to both on 2026-10-30.
 
-      | Rule | Counts | Agent | Evidence |
+      | Rule | Counts | Verdict | Evidence |
       | --- | --- | --- | --- |
       | Validate input with zod schemas | 442 · 0, 442 validating files | yes | 476 files import zod (34 only as types); no yup, joi, class-validator or valibot anywhere |
       | Derive types with `z.infer<typeof Schema>` | 689 · 0, 360 files | yes | the house style is `ZFoo` schemas with `TFoo = z.infer<typeof ZFoo>` |
@@ -135,11 +135,11 @@ the choice visible, and nothing is emitted outside those frameworks.
 - [x] Tests: Nest constructor injection; Angular `inject()`; a mixed
       Angular project under 80%; `new Date()` and `new Map()` are not
       services; a class without a DI decorator counts nothing.
-- [ ] **Precision gate:** a real NestJS project and a real Angular project;
+- [x] **Precision gate:** a real NestJS project and a real Angular project;
       every rule emitted is agreed with by a human and recorded here.
-      *Awaiting the maintainer's yes/no.* Run on 2026-10-30.
+      Run on 2026-10-30. The maintainer answered yes to all six on 2026-10-30.
 
-      | Project | Rule | Counts | Agent | Evidence |
+      | Project | Rule | Counts | Verdict | Evidence |
       | --- | --- | --- | --- | --- |
       | brocoders/nestjs-boilerplate (NestJS) | NestJS: constructor injection | 48 · 0, 37 files | yes | no `@Inject()` on any property |
       | ″ | Inject services instead of `new` | 48 · 0, 37 files | yes | |
@@ -168,8 +168,8 @@ the choice visible, and nothing is emitted outside those frameworks.
 
 - [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` clean (449 tests).
-- [ ] Both DI precision gates and a zod precision gate (one real project that
+- [x] Both DI precision gates and a zod precision gate (one real project that
       uses zod) recorded.
 - [x] AGENTS.md's table rows for strict null, zod and DI removed.
 - [x] V1-AUDIT M3, M4 and M5 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] Status at the top of this file set to `completed`.
