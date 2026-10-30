@@ -1,6 +1,6 @@
 # Phase 10: Learning from recent git history
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |

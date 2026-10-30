@@ -28,6 +28,14 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
         context.total_files_scanned,
         plural(context.total_files_scanned)
     ));
+    match crate::commands::history::summary(store)? {
+        Some((commits, newest, at)) => out.say(format!(
+            "History: {commits} commit{} read, up to {newest}, last on {}",
+            plural(commits),
+            at.get(..10).unwrap_or(&at)
+        )),
+        None => out.say("History: not read yet; `taste scan --history 200` reads it"),
+    }
 
     out.say("");
     out.say(format!("Confirmed rules ({})", rules.rules.len()));

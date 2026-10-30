@@ -1,5 +1,6 @@
 //! One module per subcommand.
 
+pub mod history;
 pub mod init;
 pub mod learn;
 pub mod learn_delta;
@@ -31,6 +32,19 @@ pub fn delta_key(path: &Path, observation: &Observation) -> String {
     let mut bytes = Vec::new();
     for part in parts {
         bytes.extend_from_slice(part.as_bytes());
+        bytes.push(0);
+    }
+    content_hash(&bytes)
+}
+
+/// Identifies one file's change by its path and both versions, not by commit:
+/// an amended or cherry-picked commit carrying the same change matches, and
+/// so does the same commit read by the post-commit hook and by history mining.
+pub fn change_fingerprint(path: &Path, before: &str, after: &str) -> String {
+    let path = path.to_string_lossy().replace('\\', "/");
+    let mut bytes = Vec::with_capacity(path.len() + before.len() + after.len() + 2);
+    for part in [path.as_bytes(), before.as_bytes(), after.as_bytes()] {
+        bytes.extend_from_slice(part);
         bytes.push(0);
     }
     content_hash(&bytes)

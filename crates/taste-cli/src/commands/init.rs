@@ -80,6 +80,7 @@ pub fn run(cwd: &Path, out: &Output) -> anyhow::Result<()> {
 
     let scanned = taste_core::scan(&store)?;
     scan::report_scan(&scanned, out);
+    let mined = scan::read_history(&store, crate::commands::history::Window::INIT, out)?;
     let synced = store.sync()?;
     sync::report_sync(&synced, &store, out);
 
@@ -88,6 +89,7 @@ pub fn run(cwd: &Path, out: &Output) -> anyhow::Result<()> {
         .all(|(_, step)| !matches!(step, Step::Changed(_)))
         && scanned.outcomes.is_empty()
         && scanned.retracted.is_empty()
+        && mined.outcomes.is_empty()
         && synced.is_empty();
     if !fresh && untouched {
         out.say("Nothing to do: this project was already fully set up.");

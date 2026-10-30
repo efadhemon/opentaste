@@ -2,9 +2,9 @@
 //!
 //! Diffs `HEAD` against its parent (or against nothing, for the first
 //! commit), learns from each changed script file, and decays any rule whose
-//! anti-pattern the commit added. Walking further back through history is out
-//! of scope for v0.1: a wrong detector would be multiplied across every commit
-//! ever made.
+//! anti-pattern the commit added. Walking further back through history
+//! is `taste scan --history`'s job ([`crate::commands::history`]), which shares
+//! this command's fingerprints so the two never count one change twice.
 //!
 //! Each file's change is learned from once. The hook fires again on `git
 //! commit --amend`, a cherry-pick or a rebuilt branch, and the command can be
@@ -16,11 +16,11 @@
 //! the commit carries the same edit.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use taste_core::{content_hash, contradictions, RuleStore, SupportedLanguage};
+use taste_core::{contradictions, RuleStore, SupportedLanguage};
 
-use crate::commands::{delta_key, describe_outcome, sync};
+use crate::commands::{change_fingerprint, delta_key, describe_outcome, sync};
 use crate::git;
 use crate::output::Output;
 
@@ -40,7 +40,7 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     let mut fingerprints = Vec::new();
     let mut seen_before = 0usize;
     let mut from_editor = 0usize;
-    for (path, added) in changed_files(&root) {
+    for (path, added) in git::changed_files(&root, "HEAD").changes {
         if !SupportedLanguage::from_path(&path).is_some_and(SupportedLanguage::has_analyzers) {
             continue;
         }
@@ -100,58 +100,6 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
         sync::report_sync(&report, store, out);
     }
     Ok(())
-}
-
-/// Identifies one file's change by its path and both versions, not by commit:
-/// an amended or cherry-picked commit carrying the same change matches.
-fn change_fingerprint(path: &Path, before: &str, after: &str) -> String {
-    let path = path.to_string_lossy().replace('\\', "/");
-    let mut bytes = Vec::with_capacity(path.len() + before.len() + after.len() + 2);
-    for part in [path.as_bytes(), before.as_bytes(), after.as_bytes()] {
-        bytes.extend_from_slice(part);
-        bytes.push(0);
-    }
-    content_hash(&bytes)
-}
-
-/// Files `HEAD` added or modified, relative to the project root, with whether
-/// each was added. Deletions teach nothing. Merge commits list nothing.
-fn changed_files(root: &Path) -> Vec<(PathBuf, bool)> {
-    let Some(raw) = git::output(
-        root,
-        &[
-            "diff-tree",
-            "-r",
-            "-z",
-            "--no-commit-id",
-            "--name-status",
-            "--no-renames",
-            "--relative",
-            "--root",
-            "HEAD",
-        ],
-    ) else {
-        return Vec::new();
-    };
-    let fields: Vec<&[u8]> = raw
-        .split(|byte| *byte == 0)
-        .filter(|f| !f.is_empty())
-        .collect();
-    fields
-        .chunks(2)
-        .filter_map(|pair| {
-            let [status, path] = pair else {
-                return None;
-            };
-            let added = match status.first() {
-                Some(b'A') => true,
-                Some(b'M') => false,
-                _ => return None,
-            };
-            let path = PathBuf::from(String::from_utf8_lossy(path).into_owned());
-            Some((path, added))
-        })
-        .collect()
 }
 
 /// The contents of `path` at `revision`, when it is UTF-8 and not huge.
