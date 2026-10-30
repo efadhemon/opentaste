@@ -29,19 +29,19 @@ phase reference to **Shipped**.
 | `config.rs` paths for `rules.json`, `cache.db` | **Shipped** |
 | `config.rs` / `sqlite_store.rs`: `~/.taste/global.db` | Phase 11 (M6) |
 | `models.rs` types | **Shipped** |
-| `parser.rs`: TS/JS, Python, Rust, Go | **Shipped** for parsing; analyzers for Python, Rust, Go in phase 8 (M2) |
+| `parser.rs`: TS/JS, Python, Rust, Go | **Shipped**: parsing, and analyzers and detectors for all four (phase 8, `ast/analyzers/{python,rust,go}.rs`, `diff/{python,rust,go}.rs`) |
 | `imports.rs`: alias vs relative, named vs default | **Shipped**; barrel exports fixed in phase 7 |
 | `types.rs`: interface vs type | **Shipped** |
-| `types.rs`: strict null checks | Phase 9 step 1 (M3) |
-| `types.rs`: zod schemas | Phase 9 step 2 (M4) |
+| `types.rs`: strict null checks | **Shipped** (phase 9 step 1): read from `tsconfig.json`, `ast/tsconfig.rs`; diff detector in `diff/structural.rs` |
+| `types.rs`: zod schemas | **Shipped** (phase 9 step 2): `ast/analyzers/validation.rs` |
 | `functions.rs`: arrow vs declaration, guard clauses | **Shipped** |
 | `arch.rs`: custom decorators, custom error classes | **Shipped** |
-| `arch.rs`: DI patterns | Phase 9 step 3 (M5) |
+| `arch.rs`: DI patterns | **Shipped** (phase 9 step 3): `ast/analyzers/di.rs`, NestJS and Angular only |
 | `diff/structural.rs` with `similar` + node matching | **Shipped** |
 | `diff/scrubber.rs` | **Shipped**; boundary fix in phase 7 |
 | `scorer/confidence.rs` | **Shipped** |
 | `scorer/dedup.rs`: token-jaccard | **Shipped** |
-| `scorer/dedup.rs`: structural similarity | Phase 8 step 1 (M12) |
+| `scorer/dedup.rs`: structural similarity | **Shipped** (phase 8 step 1): `scorer/dedup.rs::same_edit` |
 | `storage/json_store.rs`, deterministic | **Shipped** |
 | `transpiler/`: marker, Cursor `.mdc`, `CLAUDE.md`, `.windsurfrules`, `AGENTS.md` + Copilot | **Shipped** |
 | `taste-mcp`: zero-dependency JSON-RPC 2.0 over stdio | **Shipped**: depends only on `taste-core`, `serde`, `serde_json`, `anyhow` |
