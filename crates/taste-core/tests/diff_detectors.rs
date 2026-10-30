@@ -352,3 +352,40 @@ fn rust_corrections_in_tests_main_or_a_binary_are_not_learned() {
     .unwrap();
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn go_bare_error_becoming_a_wrapped_one_is_detected() {
+    fires("go/bare-to-wrapped", "internal/config/config.go", "%w");
+}
+
+#[test]
+fn go_println_becoming_slog_is_detected() {
+    fires(
+        "go/print-to-structured",
+        "internal/sync/run.go",
+        "structured logger",
+    );
+}
+
+#[test]
+fn go_else_becoming_an_early_return_is_detected() {
+    fires(
+        "go/guard-clause",
+        "internal/orders/price.go",
+        "early returns",
+    );
+}
+
+#[test]
+fn a_go_print_replaced_under_cmd_is_not_learned() {
+    let (before, after) = pair_of("go/print-to-structured", "go", false);
+    let found = analyze(&before, &after, Path::new("cmd/sync/run.go")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_go_test_file_is_scoped_to_test_files() {
+    let (before, after) = pair_of("go/guard-clause", "go", false);
+    let found = analyze(&before, &after, Path::new("internal/orders/price_test.go")).unwrap();
+    assert_eq!(found[0].scope, "internal/**/*_test.go");
+}

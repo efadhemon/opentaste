@@ -126,12 +126,12 @@ impl SupportedLanguage {
 
     /// Whether OpenTaste learns anything from this language yet. The scanner
     /// and the post-commit hook skip other files before reading them. This is
-    /// the one switch to flip when a language gains analyzers and detectors.
+    /// the one switch to flip when a language gains analyzers and detectors;
+    /// the match is exhaustive so a new family has to decide.
     pub fn has_analyzers(self) -> bool {
-        matches!(
-            self.family(),
-            Family::Script | Family::Python | Family::Rust
-        )
+        match self.family() {
+            Family::Script | Family::Python | Family::Rust | Family::Go => true,
+        }
     }
 
     /// Grammar for this language.

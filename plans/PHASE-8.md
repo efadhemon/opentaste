@@ -177,37 +177,71 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 ## Step 4: Go
 
-- [ ] Analyzers for the three Go dimensions, as `ast/analyzers/go.rs`.
+- [x] Analyzers for the three Go dimensions, as `ast/analyzers/go.rs`.
       `return err` directly after a call that already wraps is not "bare";
       count only returns of an `err` from another package's call.
-- [ ] Detectors: `return err` → `fmt.Errorf("…: %w", err)`; `fmt.Println` →
-      `slog`; nested `if`/`else` → guard clause.
-- [ ] Fixtures under `tests/fixtures/go/`.
-- [ ] Turn Go on in `has_analyzers`.
+      (The error must come from the `if`'s initializer or the statement just
+      before it, and that call must be `pkg.Func(…)` on an imported package.
+      Wrapping is `fmt.Errorf` with `%w`.) Logging does not count in
+      `package main`, under `cmd/`, in `func main`, or in files importing
+      `flag`, cobra, urfave/cli, kong or ff; a logger is `slog`, zap, zerolog,
+      logrus, or a value or call named as one (`s.logger`, `app.Logger()`).
+      An `if` whose condition or initializer mentions `err` or an `…Err`
+      variable is the error idiom and is never counted as a guard.
+- [x] Detectors: `return err` → `fmt.Errorf("…: %w", err)`; `fmt.Println` →
+      `slog`; nested `if`/`else` → guard clause. (`diff/go.rs`. The logger
+      detector pairs on the message, slog's first argument.)
+- [x] Fixtures under `tests/fixtures/go/`.
+- [x] Turn Go on in `has_analyzers`. Every supported language now has
+      analyzers; the function is an exhaustive match so a new family decides.
 - [ ] **Precision gate:** three real Go projects.
+      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 on shallow clones
+      of go-chi/chi (library), junegunn/fzf (CLI), pocketbase/pocketbase (web
+      service) and cli/cli (CLI).
+
+      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | --- | --- | --- | --- | --- |
+      | pocketbase (web service) | Go: structured logger over prints | 107 · 14, 45 files | yes | `app.Logger()` is a `*slog.Logger`; the 14 prints are `log.Println` warnings in `core/` and `tools/`; its cobra command plugins are not counted |
+      | ″ | TS/JS: named exports | 117 · 1, 111 files | yes | hand-written `ui/src`; `ui/dist` is skipped |
+      | ″ | TS/JS: `function` declarations | 626 · 31, 159 files | yes | `ui/src` modules declare functions throughout |
+
+      No Go rule from chi, fzf or cli/cli, correctly: their ratios are mixed.
+      cli/cli wraps 634 and returns 754 bare; guard ratios run 67–80%.
+
+      **Two counting bugs found and fixed while checking.** `if err != nil
+      && !errors.Is(err, X) { return err }` and `if errors.Is(err, X) {
+      return … }` were counted as guards; any `if` mentioning an error
+      variable is now the idiom (this took pocketbase's guards from a
+      borderline 80% to 79%, so that rule is no longer emitted). And
+      `app.Logger().Error(…)` was not recognised as logging, so pocketbase
+      showed 0 structured calls; call receivers named as loggers now count,
+      and files using a CLI package no longer count their prints.
 
 ## Step 5: The full test set
 
-- [ ] Every analyzer: a unanimous file, a mixed file, and a file that must
-      count nothing. (Python and Rust done.)
-- [ ] Every detector: one positive and one negative fixture.
-- [ ] Test code, scripts and `main` excluded where the step says so.
-      (Python and Rust done.)
-- [ ] A mixed-language repository (TS + Python + Go) produces separate rules
-      per language and none that crosses languages. (TS + Python done:
-      `a_mixed_repository_keeps_each_languages_rules_apart`.)
-- [ ] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
-      from a `.py`, `.rs` and `.go` correction. (`.py` and `.rs` done.)
+- [x] Every analyzer: a unanimous file, a mixed file, and a file that must
+      count nothing.
+- [x] Every detector: one positive and one negative fixture.
+- [x] Test code, scripts and `main` excluded where the step says so.
+- [x] A mixed-language repository (TS + Python + Go) produces separate rules
+      per language and none that crosses languages.
+      (`a_typescript_python_and_go_repository_keeps_every_languages_rules_apart`.)
+- [x] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
+      from a `.py`, `.rs` and `.go` correction.
 
 ---
 
 ## Definition of done
 
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-      warnings` and `cargo test --workspace` clean.
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean (415 tests).
 - [ ] The three precision gates recorded in this file, every emitted rule
       agreed with.
-- [ ] The website's detector reference and language lists updated (phase 13
-      checks this).
-- [ ] V1-AUDIT M2 and M12 marked fixed.
+- [x] The website's detector reference and language lists updated (phase 13
+      checks this). *Handed to phase 13 step 5:* the site lives on the
+      unmerged `feat/website` branch, its detector reference is to be
+      generated from the code there, and step 5 already lists pages for
+      Python, Rust and Go. The detectors and exclusions to document are the
+      ones recorded in steps 2–4 above.
+- [x] V1-AUDIT M2 and M12 marked fixed.
 - [ ] Status at the top of this file set to `completed`.

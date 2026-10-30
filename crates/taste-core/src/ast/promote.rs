@@ -12,7 +12,7 @@
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
-use super::{Family, PythonTally, RustTally, ScriptTally, Tally};
+use super::{Family, GoTally, PythonTally, RustTally, ScriptTally, Tally};
 
 /// Minimum share of occurrences the winning side must hold.
 pub const MIN_RATIO: f32 = 0.80;
@@ -65,9 +65,17 @@ pub const RS_PREFER_LOG_MACROS: &str =
 pub const RS_PREFER_GUARD_CLAUSES: &str =
     "In Rust, prefer early `return` and `let … else` guards over nested if/else blocks.";
 
+pub const GO_PREFER_WRAPPED_ERRORS: &str =
+    "In Go, wrap errors from other packages with context (`fmt.Errorf(\"…: %w\", err)`) instead of returning them bare.";
+pub const GO_PREFER_STRUCTURED_LOGGING: &str =
+    "In Go library code, log through a structured logger (`log/slog`, zap or zerolog) instead of `fmt.Println` or `log.Printf`.";
+pub const GO_PREFER_GUARD_CLAUSES: &str =
+    "In Go, prefer early returns over if/else blocks, beyond the usual `if err != nil` checks.";
+
 const SCRIPT_SCOPE: &str = Family::Script.scope();
 const PYTHON_SCOPE: &str = Family::Python.scope();
 const RUST_SCOPE: &str = Family::Rust.scope();
+const GO_SCOPE: &str = Family::Go.scope();
 const TYPESCRIPT_SCOPE: &str = "**/*.{ts,tsx}";
 
 /// Observations the tally is strong enough to support, in a stable order.
@@ -81,10 +89,40 @@ pub fn observations(tally: &Tally) -> Vec<Observation> {
     push(&mut found, control_flow(script));
     push(&mut found, decorators(script));
     push(&mut found, errors(script));
-    for observation in python(&tally.python).into_iter().chain(rust(&tally.rust)) {
+    let others = python(&tally.python)
+        .into_iter()
+        .chain(rust(&tally.rust))
+        .chain(go(&tally.go));
+    for observation in others {
         push(&mut found, Some(observation));
     }
     found
+}
+
+/// Go's dimensions, none of them symmetric.
+fn go(tally: &GoTally) -> Vec<Observation> {
+    [
+        (
+            tally.errors,
+            RuleCategory::ErrorHandling,
+            GO_PREFER_WRAPPED_ERRORS,
+        ),
+        (
+            tally.logging,
+            RuleCategory::CodeStyle,
+            GO_PREFER_STRUCTURED_LOGGING,
+        ),
+        (
+            tally.control_flow,
+            RuleCategory::CodeStyle,
+            GO_PREFER_GUARD_CLAUSES,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(count, category, instruction)| {
+        choose(count, false).map(|(_, ratio)| observed(category, GO_SCOPE, instruction, ratio))
+    })
+    .collect()
 }
 
 /// Rust's dimensions. Only `use` paths are symmetric.
@@ -485,5 +523,21 @@ mod tests {
             opposite_instruction(RS_PREFER_SUPER_PATHS),
             Some(RS_PREFER_CRATE_PATHS)
         );
+    }
+
+    #[test]
+    fn go_counts_promote_go_rules_scoped_to_go_files() {
+        let tally = Tally {
+            go: GoTally {
+                errors: files(45, 5, 12),
+                logging: files(3, 30, 10),
+                control_flow: files(9, 1, 9),
+            },
+            ..Tally::default()
+        };
+        let promoted = observations(&tally);
+        let instructions: Vec<_> = promoted.iter().map(|o| o.instruction.as_str()).collect();
+        assert_eq!(instructions, vec![GO_PREFER_WRAPPED_ERRORS]);
+        assert_eq!(promoted[0].scope, "**/*.go");
     }
 }

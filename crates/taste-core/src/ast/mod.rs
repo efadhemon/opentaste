@@ -10,6 +10,7 @@ mod query;
 mod roles;
 mod scan;
 
+pub(crate) use analyzers::go;
 pub(crate) use analyzers::python;
 pub(crate) use analyzers::rust;
 pub use analyzers::{
@@ -18,7 +19,8 @@ pub use analyzers::{
 pub(crate) use analyzers::{decorator_name, is_custom_error, is_framework_decorator};
 pub use parser::{content_hash, parse, Family, SupportedLanguage};
 pub use promote::{
-    observations, opposite_instruction, MIN_FILES, MIN_RATIO, PREFER_ARROW_FUNCTIONS,
+    observations, opposite_instruction, GO_PREFER_GUARD_CLAUSES, GO_PREFER_STRUCTURED_LOGGING,
+    GO_PREFER_WRAPPED_ERRORS, MIN_FILES, MIN_RATIO, PREFER_ARROW_FUNCTIONS,
     PREFER_CUSTOM_DECORATORS, PREFER_CUSTOM_ERRORS, PREFER_DEEP_RELATIVE, PREFER_DEFAULT_EXPORTS,
     PREFER_FUNCTION_DECLARATIONS, PREFER_GUARD_CLAUSES, PREFER_INTERFACE, PREFER_NAMED_EXPORTS,
     PREFER_PATH_ALIASES, PREFER_TYPE_ALIAS, PY_PREFER_ABSOLUTE_IMPORTS, PY_PREFER_ANNOTATIONS,

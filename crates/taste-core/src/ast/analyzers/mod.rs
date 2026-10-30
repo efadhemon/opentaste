@@ -5,6 +5,7 @@
 
 mod arch;
 mod functions;
+pub(crate) mod go;
 mod imports;
 pub(crate) mod python;
 pub(crate) mod rust;
@@ -366,8 +367,7 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
         }
         Family::Python => tally.python = python::tally(path, tree, source),
         Family::Rust => tally.rust = rust::tally(path, tree, source),
-        // Its analyzers land in phase 8 step 4.
-        Family::Go => {}
+        Family::Go => tally.go = go::tally(path, tree, source),
     }
     tally
 }

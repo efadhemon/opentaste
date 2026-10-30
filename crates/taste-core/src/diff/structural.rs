@@ -63,11 +63,10 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
         return Ok(Vec::new());
     };
     let detectors = match lang.family() {
-        _ if !lang.has_analyzers() => return Ok(Vec::new()),
         Family::Script => DETECTORS,
         Family::Python => super::python::DETECTORS,
         Family::Rust => super::rust::DETECTORS,
-        Family::Go => return Ok(Vec::new()),
+        Family::Go => super::go::DETECTORS,
     };
     let (Some(before_tree), Some(after_tree)) = (parse(lang, before), parse(lang, after)) else {
         return Ok(Vec::new());

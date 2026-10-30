@@ -5,6 +5,7 @@
 //! to callers.
 
 mod contradiction;
+mod go;
 mod python;
 mod rust;
 mod scrubber;

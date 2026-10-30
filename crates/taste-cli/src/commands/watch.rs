@@ -250,8 +250,9 @@ mod tests {
         assert_eq!(rel("README.md"), Relevance::Ignore);
         assert_eq!(rel("app/users.py"), Relevance::Source);
         assert_eq!(rel("src/lib.rs"), Relevance::Source);
+        assert_eq!(rel("cmd/main.go"), Relevance::Source);
         assert_eq!(
-            rel("cmd/main.go"),
+            rel("src/Main.java"),
             Relevance::Ignore,
             "only languages with analyzers are scanned"
         );

@@ -5,7 +5,8 @@ mod common;
 use common::Project;
 use taste_core::ast::stored_tally;
 use taste_core::ast::{
-    PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK,
+    GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
+    RS_PREFER_QUESTION_MARK,
 };
 use taste_core::scan;
 
@@ -294,10 +295,10 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
 }
 
 #[test]
-fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
+fn an_unsupported_language_is_neither_read_nor_snapshotted() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
-    project.write("cmd/gen.go", "package main\nfunc main() {}\n");
+    project.write("src/Gen.java", "class Gen {}\n");
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1);
@@ -305,7 +306,7 @@ fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
     assert!(project
         .store
         .candidates()
-        .get_snapshot("cmd/gen.go")
+        .get_snapshot("src/Gen.java")
         .unwrap()
         .is_none());
 }
@@ -435,4 +436,65 @@ fn vendored_and_oversized_scripts_do_not_count() {
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1);
     assert_eq!(report.tallies.script.function_syntax.files, 0);
+}
+
+const GO_WRAPPING: &str = "package store\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\n\
+func Load(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, fmt.Errorf(\"load %s: %w\", p, err)\n\t}\n\treturn data, nil\n}\n";
+
+fn write_go_package(project: &Project) {
+    for index in 0..10 {
+        project.write(&format!("internal/store/load{index}.go"), GO_WRAPPING);
+        project.write(
+            &format!("internal/store/load{index}_test.go"),
+            "package store\n\nimport \"os\"\n\nfunc helper() error {\n\tif err := os.Remove(\"x\"); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n",
+        );
+    }
+}
+
+#[test]
+fn a_go_codebase_promotes_wrapped_errors_and_ignores_its_tests() {
+    let project = Project::with_cache_db();
+    write_go_package(&project);
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "_test.go files are not read");
+    assert_eq!(report.tallies.go.errors.right, 0);
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .any(|rule| rule.instruction == GO_PREFER_WRAPPED_ERRORS && rule.scope == "**/*.go"));
+}
+
+#[test]
+fn a_typescript_python_and_go_repository_keeps_every_languages_rules_apart() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 10, 0);
+    write_python_library(&project);
+    write_go_package(&project);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    for rule in &rules {
+        let expected = if rule.instruction.starts_with("In Python") {
+            "**/*.py"
+        } else if rule.instruction.starts_with("In Go") {
+            "**/*.go"
+        } else {
+            "**/*.{ts,tsx,js,jsx,mjs,cjs}"
+        };
+        assert_eq!(rule.scope, expected, "{rule:?}");
+    }
+    for instruction in [
+        PREFER_PATH_ALIASES,
+        PY_PREFER_LOGGING,
+        GO_PREFER_WRAPPED_ERRORS,
+    ] {
+        assert!(
+            rules.iter().any(|rule| rule.instruction == instruction),
+            "{instruction}"
+        );
+    }
 }
