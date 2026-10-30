@@ -4,6 +4,7 @@
 //! decides that a count is a rule; that threshold lives in [`super::promote`].
 
 mod arch;
+pub(crate) mod di;
 mod functions;
 pub(crate) mod go;
 mod imports;
@@ -80,6 +81,13 @@ pub struct ScriptTally {
     /// `left` is a `z.infer<typeof Schema>` type. `right` is a hand-written
     /// type named after a schema in the same file.
     pub schema_types: Count,
+    /// NestJS classes: `left` constructor injection, `right` `@Inject()` properties.
+    pub nest_injection: Count,
+    /// Angular classes: `left` constructor injection, `right` `inject()`.
+    pub angular_injection: Count,
+    /// DI-managed classes: `left` injected dependencies, `right` project
+    /// services built with `new`.
+    pub constructed_services: Count,
 }
 
 /// Counts for Python files outside tests and scripts.
@@ -147,6 +155,9 @@ impl ScriptTally {
         all.extend(self.validation.iter_mut());
         all.push(&mut self.validating);
         all.push(&mut self.schema_types);
+        all.push(&mut self.nest_injection);
+        all.push(&mut self.angular_injection);
+        all.push(&mut self.constructed_services);
         all
     }
 }
@@ -282,6 +293,27 @@ impl Tally {
                 "hand-written",
                 s.schema_types,
             ),
+            dimension(
+                Script,
+                "nest DI",
+                "constructor",
+                "@Inject() property",
+                s.nest_injection,
+            ),
+            dimension(
+                Script,
+                "angular DI",
+                "constructor",
+                "inject()",
+                s.angular_injection,
+            ),
+            dimension(
+                Script,
+                "services",
+                "injected",
+                "built with new",
+                s.constructed_services,
+            ),
             dimension(Python, "imports", "absolute", "relative", py.imports),
             dimension(Python, "errors", "custom", "bare Exception", py.errors),
             dimension(Python, "logging", "logger", "print()", py.logging),
@@ -335,7 +367,8 @@ impl Tally {
 ///   dimensions. Bumped once for all of phase 8: those languages are skipped
 ///   before they are read until their analyzers land, so no snapshot holds a
 ///   zero tally for them that a later step would wrongly reuse.
-/// - `tally4`: validation libraries and `z.infer` types (phase 9).
+/// - `tally4`: validation libraries, `z.infer` types and dependency
+///   injection, bumped once for all of phase 9.
 const TALLY_FORMAT: &str = "tally4";
 
 /// Persist a per-file tally in `file_snapshots.ast_signature`.
@@ -396,6 +429,7 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
     match lang.family() {
         Family::Script => {
             let checks = validation::validation(lang, tree, source);
+            let injection = di::injection(lang, tree, source);
             tally.script = ScriptTally {
                 import_paths: imports::import_paths(lang, tree, source),
                 exports: imports::exports(lang, tree, source),
@@ -407,6 +441,9 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
                 validation: checks.libraries,
                 validating: checks.validating,
                 schema_types: checks.schema_types,
+                nest_injection: injection.nest,
+                angular_injection: injection.angular,
+                constructed_services: injection.constructed,
             }
         }
         Family::Python => tally.python = python::tally(path, tree, source),

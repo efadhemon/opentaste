@@ -5,8 +5,9 @@ mod common;
 use common::Project;
 use taste_core::ast::stored_tally;
 use taste_core::ast::{
-    COMPILER_CONFIDENCE, GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS,
-    PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK, TS_STRICT_NULL, VALIDATE_WITH_ZOD,
+    COMPILER_CONFIDENCE, GO_PREFER_WRAPPED_ERRORS, NEST_CONSTRUCTOR_INJECTION,
+    PREFER_INJECTED_SERVICES, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
+    RS_PREFER_QUESTION_MARK, TS_STRICT_NULL, VALIDATE_WITH_ZOD,
 };
 use taste_core::scan;
 
@@ -630,4 +631,46 @@ fn mixed_or_too_few_validating_files_get_no_validation_rule() {
             "{zod} zod, {yup} yup: {instructions:?}"
         );
     }
+}
+
+#[test]
+fn a_nest_codebase_injecting_through_constructors_gets_its_rules() {
+    let project = Project::with_cache_db();
+    for index in 0..10 {
+        project.write(
+            &format!("src/m{index}/m{index}.service.ts"),
+            "import { Injectable } from '@nestjs/common';\nimport { Repo } from './repo';\n@Injectable()\nexport class S {\n  constructor(private readonly a: ARepository, private readonly b: BService) {}\n}\n",
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    let instructions = promoted_instructions(&report);
+    for expected in [NEST_CONSTRUCTOR_INJECTION, PREFER_INJECTED_SERVICES] {
+        assert!(
+            instructions.contains(&expected.to_string()),
+            "{expected}: {instructions:?}"
+        );
+    }
+    assert_eq!(report.tallies.script.angular_injection.files, 0);
+}
+
+#[test]
+fn a_mixed_angular_codebase_gets_no_injection_style_rule() {
+    let project = Project::with_cache_db();
+    for index in 0..10 {
+        let member = if index < 7 {
+            "  private readonly http = inject(HttpClient);\n"
+        } else {
+            "  constructor(private http: HttpClient) {}\n"
+        };
+        project.write(
+            &format!("src/app/c{index}.component.ts"),
+            &format!("import {{ Component, inject }} from '@angular/core';\n@Component({{ selector: 'c' }})\nexport class C {{\n{member}}}\n"),
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    let instructions = promoted_instructions(&report);
+    assert!(
+        !instructions.iter().any(|i| i.starts_with("In Angular")),
+        "70% inject() is not a convention: {instructions:?}"
+    );
 }

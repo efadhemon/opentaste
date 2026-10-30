@@ -112,40 +112,64 @@ convention.
 reliably." So it is counted per framework, only where the framework makes
 the choice visible, and nothing is emitted outside those frameworks.
 
-- [ ] NestJS (`@Injectable`, `@Controller`) and Angular (`@Injectable`,
+- [x] NestJS (`@Injectable`, `@Controller`) and Angular (`@Injectable`,
       `@Component`): constructor-parameter injection versus the `inject()`
       function (Angular 14+) versus property injection (`@Inject()` on a
-      field).
-- [ ] Any of those classes: a dependency created with `new SomeService(…)`
+      field). (`ast/analyzers/di.rs`. Two symmetric choices, not one
+      three-way one: NestJS has no `inject()` and Angular no `@Inject()`
+      field, so each framework gets its own dimension and rule pair.
+      `inject()` inside a functional guard or interceptor is not in a
+      managed class and counts nothing.)
+- [x] Any of those classes: a dependency created with `new SomeService(…)`
       inside the class versus injected. Rule: "Inject services instead of
-      constructing them with `new`."
-- [ ] The framework is taken from `detected_stack` and the decorator's
+      constructing them with `new`." (Only the injected side promotes. A
+      service is a class named `…Service` or `…Repository` that the project
+      imports from its own files or defines in the file.)
+- [x] The framework is taken from `detected_stack` and the decorator's
       import source; a class with a look-alike decorator from elsewhere does
-      not count.
-- [ ] Diff detector: `private readonly x = new XService()` replaced by a
+      not count. (The import source alone decides, per file: importing the
+      decorator from `@nestjs/*` or `@angular/core` is stronger evidence than
+      the stack, and keeps the analyzer pure.)
+- [x] Diff detector: `private readonly x = new XService()` replaced by a
       constructor parameter or `inject(XService)`.
-- [ ] Tests: Nest constructor injection; Angular `inject()`; a mixed
+- [x] Tests: Nest constructor injection; Angular `inject()`; a mixed
       Angular project under 80%; `new Date()` and `new Map()` are not
       services; a class without a DI decorator counts nothing.
 - [ ] **Precision gate:** a real NestJS project and a real Angular project;
       every rule emitted is agreed with by a human and recorded here.
+      *Awaiting the maintainer's yes/no.* Run on 2026-10-30.
+
+      | Project | Rule | Counts | Agent | Evidence |
+      | --- | --- | --- | --- | --- |
+      | brocoders/nestjs-boilerplate (NestJS) | NestJS: constructor injection | 48 · 0, 37 files | yes | no `@Inject()` on any property |
+      | ″ | Inject services instead of `new` | 48 · 0, 37 files | yes | |
+      | ″ | Validate input with class-validator | 31 · 0, 31 validating files | yes | the DTOs |
+      | ″ | strictNullChecks | tsconfig | yes | `"strictNullChecks": true` |
+      | gothinkster/angular-realworld-example-app (Angular) | Inject services instead of `new` | 56 · 0, 19 files | yes | |
+      | ″ | strictNullChecks | tsconfig | yes | `"strict": true` |
+
+      The Angular app has no injection-style rule, correctly: constructor
+      42 · `inject()` 14 is 75%; it is part way through moving to `inject()`.
+      Both also get rules from the older TypeScript analyzers (relative
+      imports, named exports, guard clauses, `interface`), unchanged by this
+      phase.
 
 ## Step 4: The full test set
 
-- [ ] Strict null: config reading, `extends`, comments in JSON, per-package
+- [x] Strict null: config reading, `extends`, comments in JSON, per-package
       scope, the diff detector.
-- [ ] Zod: thresholds, `z.infer`, type-only imports, the diff detector.
-- [ ] DI: each framework's styles, `new` of non-services ignored, look-alike
+- [x] Zod: thresholds, `z.infer`, type-only imports, the diff detector.
+- [x] DI: each framework's styles, `new` of non-services ignored, look-alike
       decorators ignored, the diff detector.
 
 ---
 
 ## Definition of done
 
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-      warnings` and `cargo test --workspace` clean.
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean (449 tests).
 - [ ] Both DI precision gates and a zod precision gate (one real project that
       uses zod) recorded.
-- [ ] AGENTS.md's table rows for strict null, zod and DI removed.
-- [ ] V1-AUDIT M3, M4 and M5 marked fixed.
+- [x] AGENTS.md's table rows for strict null, zod and DI removed.
+- [x] V1-AUDIT M3, M4 and M5 marked fixed.
 - [ ] Status at the top of this file set to `completed`.

@@ -20,7 +20,7 @@ use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
     node_text, parse, unquote, Family, ScriptQuery, SupportedLanguage,
 };
-use crate::ast::{validate_with, Library, TS_STRICT_NULL};
+use crate::ast::{di, validate_with, Library, PREFER_INJECTED_SERVICES, TS_STRICT_NULL};
 use crate::config::Paths;
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
@@ -123,6 +123,7 @@ const DETECTORS: &[&dyn Detector] = &[
     &ControlFlow,
     &NonNullAssertion,
     &SchemaLibrarySwap,
+    &NewToInjected,
 ];
 
 struct DecoratorSwap;
@@ -134,6 +135,7 @@ struct ErrorClass;
 struct ControlFlow;
 struct NonNullAssertion;
 struct SchemaLibrarySwap;
+struct NewToInjected;
 
 impl Detector for DecoratorSwap {
     fn detect(
@@ -439,6 +441,66 @@ impl Detector for SchemaLibrarySwap {
                 old_text,
                 new_text.clone(),
             ));
+        }
+        None
+    }
+}
+
+/// `private readonly repo = new UsersRepository()` in a NestJS or Angular
+/// class, replaced by a constructor parameter or `inject(UsersRepository)`.
+impl Detector for NewToInjected {
+    fn detect(
+        &self,
+        before_tree: &Tree,
+        before_src: &str,
+        after_tree: &Tree,
+        after_src: &str,
+        path: &Path,
+    ) -> Option<Observation> {
+        let before_imports = di::import_sources(before_tree, before_src);
+        let after_imports = di::import_sources(after_tree, after_src);
+        let before_locals = di::local_classes(before_tree, before_src);
+        let after_locals = di::local_classes(after_tree, after_src);
+        let class_name = |class: Node<'_>, source: &str| {
+            class
+                .child_by_field_name("name")
+                .map(|name| node_text(name, source).to_string())
+        };
+        let after_classes = di::managed_classes(after_tree, after_src, &after_imports);
+        for (class, _) in di::managed_classes(before_tree, before_src, &before_imports) {
+            let Some(name) = class_name(class, before_src) else {
+                continue;
+            };
+            let Some((after_class, _)) = after_classes
+                .iter()
+                .find(|(other, _)| class_name(*other, after_src).as_deref() == Some(&name))
+            else {
+                continue;
+            };
+            let before_deps = di::dependencies(class, before_src, &before_imports, &before_locals);
+            let after_deps =
+                di::dependencies(*after_class, after_src, &after_imports, &after_locals);
+            for (service, built) in &before_deps.constructed {
+                if after_deps
+                    .constructed
+                    .iter()
+                    .any(|(other, _)| other == service)
+                {
+                    continue;
+                }
+                let Some(site) =
+                    di::injection_site(*after_class, after_src, &after_imports, service)
+                else {
+                    continue;
+                };
+                return Some(observation(
+                    RuleCategory::Architecture,
+                    path,
+                    PREFER_INJECTED_SERVICES,
+                    built.clone(),
+                    site,
+                ));
+            }
         }
         None
     }

@@ -463,3 +463,25 @@ fn a_schema_moved_to_zod_while_yup_stays_in_the_file_is_not_a_migration() {
     let found = analyze(before, after, Path::new("src/schema.ts")).unwrap();
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn a_service_built_with_new_replaced_by_injection_is_detected() {
+    fires(
+        "typescript/new-to-injected",
+        "src/users/users.service.ts",
+        "Inject services",
+    );
+}
+
+#[test]
+fn an_angular_service_moved_to_inject_is_detected() {
+    let before = "import { Component } from '@angular/core';\nimport { CartService } from '../cart.service';\n@Component({ selector: 'app-cart' })\nexport class CartComponent {\n  private cart = new CartService();\n}\n";
+    let after = "import { Component, inject } from '@angular/core';\nimport { CartService } from '../cart.service';\n@Component({ selector: 'app-cart' })\nexport class CartComponent {\n  private cart = inject(CartService);\n}\n";
+    let found = analyze(before, after, Path::new("src/app/cart.component.ts")).unwrap();
+    assert!(
+        found
+            .iter()
+            .any(|o| o.instruction.contains("Inject services")),
+        "{found:?}"
+    );
+}

@@ -64,6 +64,17 @@ pub fn validate_with(library: Library) -> &'static str {
     VALIDATE_WITH[Library::ALL.iter().position(|l| *l == library).unwrap_or(0)]
 }
 
+pub const NEST_CONSTRUCTOR_INJECTION: &str =
+    "In NestJS, inject dependencies through constructor parameters instead of `@Inject()` on properties.";
+pub const NEST_PROPERTY_INJECTION: &str =
+    "In NestJS, inject dependencies with `@Inject()` on properties instead of constructor parameters.";
+pub const ANGULAR_CONSTRUCTOR_INJECTION: &str =
+    "In Angular, inject dependencies through constructor parameters instead of the `inject()` function.";
+pub const ANGULAR_INJECT_FUNCTION: &str =
+    "In Angular, inject dependencies with the `inject()` function instead of constructor parameters.";
+pub const PREFER_INJECTED_SERVICES: &str =
+    "Inject services instead of constructing them with `new`.";
+
 pub const TS_STRICT_NULL: &str = "This code compiles with `strictNullChecks`: handle `null` and `undefined` explicitly; do not silence them with the non-null assertion `!`.";
 /// Confidence of a rule read from compiler settings: the compiler states it,
 /// so it is trusted like a developer saying it outright.
@@ -121,6 +132,9 @@ pub fn observations(tally: &Tally) -> Vec<Observation> {
     push(&mut found, errors(script));
     push(&mut found, validation(script));
     push(&mut found, schema_types(script));
+    for observation in injection(script) {
+        push(&mut found, Some(observation));
+    }
     let others = python(&tally.python)
         .into_iter()
         .chain(rust(&tally.rust))
@@ -163,6 +177,43 @@ fn schema_types(tally: &ScriptTally) -> Option<Observation> {
         TS_PREFER_Z_INFER,
         ratio,
     ))
+}
+
+/// NestJS and Angular injection styles, which are symmetric, and injected
+/// services over ones built with `new`, which is not.
+fn injection(tally: &ScriptTally) -> Vec<Observation> {
+    let mut found = Vec::new();
+    for (count, constructor, other) in [
+        (
+            tally.nest_injection,
+            NEST_CONSTRUCTOR_INJECTION,
+            NEST_PROPERTY_INJECTION,
+        ),
+        (
+            tally.angular_injection,
+            ANGULAR_CONSTRUCTOR_INJECTION,
+            ANGULAR_INJECT_FUNCTION,
+        ),
+    ] {
+        if let Some((left_wins, ratio)) = choose(count, true) {
+            let instruction = if left_wins { constructor } else { other };
+            found.push(observed(
+                RuleCategory::Architecture,
+                TYPESCRIPT_SCOPE,
+                instruction,
+                ratio,
+            ));
+        }
+    }
+    if let Some((_, ratio)) = choose(tally.constructed_services, false) {
+        found.push(observed(
+            RuleCategory::Architecture,
+            TYPESCRIPT_SCOPE,
+            PREFER_INJECTED_SERVICES,
+            ratio,
+        ));
+    }
+    found
 }
 
 /// Go's dimensions, none of them symmetric.
@@ -446,6 +497,10 @@ pub fn opposite_instruction(instruction: &str) -> Option<&'static str> {
         PREFER_TYPE_ALIAS => PREFER_INTERFACE,
         PREFER_FUNCTION_DECLARATIONS => PREFER_ARROW_FUNCTIONS,
         PREFER_ARROW_FUNCTIONS => PREFER_FUNCTION_DECLARATIONS,
+        NEST_CONSTRUCTOR_INJECTION => NEST_PROPERTY_INJECTION,
+        NEST_PROPERTY_INJECTION => NEST_CONSTRUCTOR_INJECTION,
+        ANGULAR_CONSTRUCTOR_INJECTION => ANGULAR_INJECT_FUNCTION,
+        ANGULAR_INJECT_FUNCTION => ANGULAR_CONSTRUCTOR_INJECTION,
         PY_PREFER_ABSOLUTE_IMPORTS => PY_PREFER_RELATIVE_IMPORTS,
         PY_PREFER_RELATIVE_IMPORTS => PY_PREFER_ABSOLUTE_IMPORTS,
         RS_PREFER_CRATE_PATHS => RS_PREFER_SUPER_PATHS,
@@ -699,6 +754,40 @@ mod tests {
         script.schema_types = files(2, 18, 10);
         assert!(observations(&Tally {
             script,
+            ..Tally::default()
+        })
+        .is_empty());
+    }
+
+    #[test]
+    fn injection_styles_promote_either_side_and_new_never_does() {
+        let script = ScriptTally {
+            nest_injection: files(40, 2, 12),
+            angular_injection: files(3, 30, 11),
+            constructed_services: files(60, 1, 12),
+            ..ScriptTally::default()
+        };
+        let instructions: Vec<_> = observations(&Tally {
+            script,
+            ..Tally::default()
+        })
+        .into_iter()
+        .map(|o| o.instruction)
+        .collect();
+        assert_eq!(
+            instructions,
+            vec![
+                NEST_CONSTRUCTOR_INJECTION,
+                ANGULAR_INJECT_FUNCTION,
+                PREFER_INJECTED_SERVICES
+            ]
+        );
+        let built = ScriptTally {
+            constructed_services: files(1, 30, 12),
+            ..ScriptTally::default()
+        };
+        assert!(observations(&Tally {
+            script: built,
             ..Tally::default()
         })
         .is_empty());
