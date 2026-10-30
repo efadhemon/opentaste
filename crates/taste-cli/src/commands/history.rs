@@ -8,6 +8,11 @@
 //!   first-parent chain, and for `taste init` no older than 180 days.
 //! - **Corrections only.** Code written before a rule existed is not the
 //!   developer working against it, so history never applies contradictions.
+//! - **Only what the code still does.** A past correction towards one side
+//!   of a symmetric choice is dropped when the current code mostly does the
+//!   other: the team reversed it later. create-t3-turbo's history has arrow
+//!   corrections in a UI package that is 31 `function` declarations to 9
+//!   arrows today; counting them would teach the opposite of its taste.
 //! - **Every change once.** Each file's change carries the fingerprint the
 //!   post-commit hook uses, so mining twice, or mining a commit the hook also
 //!   saw, counts it once. A cursor remembers the newest commit read, and the
@@ -27,7 +32,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use rayon::prelude::*;
-use taste_core::{Observation, Outcome, RuleStore, SupportedLanguage};
+use taste_core::ast::current_sides;
+use taste_core::{Observation, Outcome, RuleStore, SupportedLanguage, Tally};
 
 use crate::commands::{change_fingerprint, delta_key};
 use crate::git::{self, Blobs};
@@ -94,6 +100,8 @@ pub struct HistoryReport {
     pub outcomes: Vec<Outcome>,
     /// Corrections already counted, by the hook, the editor or an earlier run.
     pub already_learned: usize,
+    /// Corrections the current code has since reversed, not counted.
+    pub reversed: usize,
 }
 
 impl HistoryReport {
@@ -173,9 +181,13 @@ struct FileChange {
 
 /// Learn from the commits in `window` that have not been read yet.
 /// `progress` is called with `(done, total)` as commits are recorded.
+///
+/// `current` is the working tree's tally from the scan that ran just before,
+/// which says which side of each choice the code takes today.
 pub fn mine(
     store: &RuleStore,
     window: Window,
+    current: &Tally,
     progress: &mut dyn FnMut(usize, usize),
 ) -> anyhow::Result<HistoryReport> {
     let mut report = HistoryReport::default();
@@ -255,6 +267,12 @@ pub fn mine(
             // change twice; at worst it misses this one.
             store.candidates().mark_learned(&change.fingerprint)?;
             for observation in analysed[next].iter().cloned() {
+                let reversed = current_sides(current, &observation.instruction)
+                    .is_some_and(|(same, opposite)| opposite > same);
+                if reversed {
+                    report.reversed += 1;
+                    continue;
+                }
                 if store
                     .candidates()
                     .take_delta(&delta_key(&change.path, &observation))?

@@ -1,6 +1,6 @@
 //! `taste scan`: infer rules from the repository's code.
 
-use taste_core::{RuleStore, ScanReport};
+use taste_core::{RuleStore, ScanReport, Tally};
 
 use crate::commands::history::{self, HistoryReport, Window};
 use crate::commands::{describe_outcome, sync};
@@ -10,7 +10,12 @@ pub fn run(store: &RuleStore, history: Option<usize>, out: &Output) -> anyhow::R
     let report = taste_core::scan(store)?;
     report_scan(&report, out);
     let mined = match history {
-        Some(commits) => Some(read_history(store, Window::commits(commits), out)?),
+        Some(commits) => Some(read_history(
+            store,
+            Window::commits(commits),
+            &report.tallies,
+            out,
+        )?),
         None => None,
     };
     // Promotion triggers a sync (SPEC.md §5.1), as it does for every other
@@ -29,13 +34,17 @@ pub fn run(store: &RuleStore, history: Option<usize>, out: &Output) -> anyhow::R
 }
 
 /// Learn from recent commits in `window`, printing progress and a summary.
+///
+/// `current` is the tally of the scan that just ran: history leaves out
+/// corrections the code has since reversed.
 pub fn read_history(
     store: &RuleStore,
     window: Window,
+    current: &Tally,
     out: &Output,
 ) -> anyhow::Result<HistoryReport> {
     let mut last = 0;
-    let report = history::mine(store, window, &mut |done, total| {
+    let report = history::mine(store, window, current, &mut |done, total| {
         if done == total || done >= last + 25 {
             last = done;
             out.say(format!("Reading history: {done}/{total} commits"));
@@ -62,6 +71,13 @@ pub fn report_history(report: &HistoryReport, out: &Output) {
         report.outcomes.len(),
         plural(report.outcomes.len()),
     ));
+    if report.reversed > 0 {
+        out.say(format!(
+            "  left out {} past correction{} the code has since moved away from.",
+            report.reversed,
+            plural(report.reversed)
+        ));
+    }
     for outcome in &report.outcomes {
         out.say(format!("  {}", describe_outcome(outcome)));
     }

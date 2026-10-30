@@ -349,3 +349,35 @@ fn a_run_interrupted_before_its_cursor_moved_resumes_without_counting_twice() {
         "nothing counted twice"
     );
 }
+
+#[test]
+fn a_past_correction_the_code_has_since_reversed_is_left_out() {
+    let repo = Repo::new();
+    // Once, a declaration was turned into an arrow...
+    repo.commit(
+        &[("src/a.ts", "export function load() {\n  return 1;\n}\n")],
+        &ADA,
+    );
+    repo.commit(
+        &[("src/a.ts", "export const load = () => {\n  return 1;\n};\n")],
+        &ADA,
+    );
+    // ...but today the code is written with declarations.
+    let today: Vec<(String, String)> = (0..6)
+        .map(|i| {
+            (
+                format!("src/m{i}.ts"),
+                format!("export function m{i}() {{\n  return {i};\n}}\n"),
+            )
+        })
+        .collect();
+    let files: Vec<(&str, &str)> = today
+        .iter()
+        .map(|(p, c)| (p.as_str(), c.as_str()))
+        .collect();
+    repo.commit(&files, &ADA);
+
+    let out = scan_history(&repo, 200);
+    assert!(out.contains("0 corrections came from history"), "{out}");
+    assert!(out.contains("left out 1 past correction"), "{out}");
+}

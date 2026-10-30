@@ -80,7 +80,12 @@ pub fn run(cwd: &Path, out: &Output) -> anyhow::Result<()> {
 
     let scanned = taste_core::scan(&store)?;
     scan::report_scan(&scanned, out);
-    let mined = scan::read_history(&store, crate::commands::history::Window::INIT, out)?;
+    let mined = scan::read_history(
+        &store,
+        crate::commands::history::Window::INIT,
+        &scanned.tallies,
+        out,
+    )?;
     let synced = store.sync()?;
     sync::report_sync(&synced, &store, out);
 

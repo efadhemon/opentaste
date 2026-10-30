@@ -271,6 +271,7 @@ impl RuleStore {
             });
         }
 
+        self.decay_opposite_candidates(&observation)?;
         let candidate = match self.find_matching_candidate(&observation)? {
             Some(existing) => merge_into_candidate(existing, &observation),
             None => observation.into_candidate(),
@@ -471,6 +472,34 @@ impl RuleStore {
         self.json.save(rules)?;
         self.candidates.delete_candidate(&candidate_id)?;
         Ok(Outcome::Promoted(Box::new(rule)))
+    }
+
+    /// A correction towards one side of a choice is evidence against a
+    /// candidate for the other side in the same scope, so that candidate
+    /// decays as a contradicted rule would. Without this, a team that moved
+    /// from one style to the other keeps both candidates, and whichever
+    /// collected six sightings first, old or new, would win; reading history
+    /// oldest first makes that common.
+    fn decay_opposite_candidates(&self, observation: &Observation) -> Result<()> {
+        let opposites: Vec<String> = crate::ast::conflicting_instructions(&observation.instruction)
+            .into_iter()
+            .map(normalize_instruction)
+            .collect();
+        if opposites.is_empty() {
+            return Ok(());
+        }
+        for mut candidate in self.candidates.list_candidates_in(observation.category)? {
+            if candidate.scope.trim() != observation.scope.trim()
+                || !opposites.contains(&normalize_instruction(&candidate.instruction))
+            {
+                continue;
+            }
+            candidate.confidence = scoring::decay(candidate.confidence);
+            candidate.contradictions += 1;
+            candidate.updated_at = Utc::now();
+            self.candidates.upsert_candidate(&candidate)?;
+        }
+        Ok(())
     }
 
     /// Find a candidate describing the same preference as `observation`.

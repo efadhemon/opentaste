@@ -22,7 +22,7 @@ before it is reliable.
 
 | # | SPEC says | What exists | Where |
 | --- | --- | --- | --- |
-| M1 | Scanner learns from "existing source files **and recent Git history**" (§1) | Only the working tree is scanned. `taste learn --from-git-head` sees the last commit only. | `ast/scan.rs`, `commands/learn.rs` |
+| M1 | Scanner learns from "existing source files **and recent Git history**" (§1) | Only the working tree is scanned. `taste learn --from-git-head` sees the last commit only. | `ast/scan.rs`, `commands/learn.rs` **Fixed in phase 10.** |
 | M2 | Parser and analyzers for **TS/JS, Python, Rust, Go** (§2, §10 phase 3) | All four grammars parse, but every analyzer and every diff detector returns nothing unless `is_script()`. Python, Rust and Go teach nothing. | `ast/analyzers/mod.rs:189`, `diff/structural.rs:64` **Fixed in phase 8 steps 2–4.** |
 | M3 | `types.rs`: **strict null checks** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 1.** |
 | M4 | `types.rs`: **zod schemas** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 2.** |
@@ -52,7 +52,7 @@ before it is reliable.
 | W11 | Non-script files are read, hashed, parsed and snapshotted for no counts | Wasted scan time (until M2 lands) | Phase 3 review, improvement 3. **Fixed in phase 7 step 8.** |
 | W12 | `MAX_FILE_BYTES` doc says "at or above", the code uses `>` | Doc mismatch | Phase 3 review, improvement 9. **Fixed in phase 7 step 8.** |
 
-| W13 | A standalone `taste scan` confirms rules but does not run `taste sync`, unlike every other learner (§5.1: promotion "triggers `taste sync`") | Rules sit in `rules.json` without reaching the editor files until something else syncs | Plan validation. Phase 10 step 4. |
+| W13 | A standalone `taste scan` confirms rules but does not run `taste sync`, unlike every other learner (§5.1: promotion "triggers `taste sync`") | Rules sit in `rules.json` without reaching the editor files until something else syncs | Plan validation. Phase 10 step 4. **Fixed in phase 10 step 4.** |
 
 ## 3. Documentation that is out of date
 
