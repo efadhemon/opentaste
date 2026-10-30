@@ -50,37 +50,41 @@ fn fires(detector: &str, path: &str, needle: &str) {
 
 #[test]
 fn decorator_swap_fires_only_when_the_decorator_name_changes() {
-    fires("decorator-swap", "src/users/user.entity.ts", "AutoEntity");
+    fires(
+        "typescript/decorator-swap",
+        "src/users/user.entity.ts",
+        "AutoEntity",
+    );
 }
 
 #[test]
 fn import_rewrite_fires_only_when_relative_becomes_alias() {
-    fires("import-rewrite", "src/app.ts", "path aliases");
+    fires("typescript/import-rewrite", "src/app.ts", "path aliases");
 }
 
 #[test]
 fn logger_replacement_fires_only_when_console_becomes_a_logger() {
-    fires("logger-replacement", "src/app.ts", "logger");
+    fires("typescript/logger-replacement", "src/app.ts", "logger");
 }
 
 #[test]
 fn type_swap_fires_only_when_interface_becomes_type() {
-    fires("type-swap", "src/app.ts", "type");
+    fires("typescript/type-swap", "src/app.ts", "type");
 }
 
 #[test]
 fn function_syntax_fires_only_when_a_declaration_becomes_an_arrow() {
-    fires("function-syntax", "src/app.ts", "arrow");
+    fires("typescript/function-syntax", "src/app.ts", "arrow");
 }
 
 #[test]
 fn error_class_fires_only_when_bare_error_becomes_a_custom_class() {
-    fires("error-class", "src/app.ts", "custom error");
+    fires("typescript/error-class", "src/app.ts", "custom error");
 }
 
 #[test]
 fn control_flow_fires_only_when_else_becomes_a_guard() {
-    fires("control-flow", "src/app.ts", "guard");
+    fires("typescript/control-flow", "src/app.ts", "guard");
 }
 
 #[test]
