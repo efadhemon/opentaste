@@ -29,9 +29,11 @@ use super::parser::content_hash;
 use super::promote;
 use super::{analyze_source, is_test_or_script, SupportedLanguage, Tally};
 
-/// Files larger than this are skipped. A megabyte is far past a source file
-/// the statistical detectors can usefully read.
-const MAX_FILE_BYTES: u64 = 1024 * 1024;
+/// Files larger than this are skipped. 256 KiB is several thousand lines,
+/// past nearly every file a person writes by hand, and what lies beyond it is
+/// mostly generated or vendored: a 13,000-line `datatables.js` copied into
+/// `src/static/` outweighed every script the project wrote itself.
+const MAX_FILE_BYTES: u64 = 256 * 1024;
 
 /// What one cold-start scan did.
 #[derive(Debug, Clone, PartialEq)]
@@ -220,6 +222,25 @@ fn is_generated(path: &Path, file_type: Option<std::fs::FileType>) -> bool {
     GENERATED_SUFFIXES
         .iter()
         .any(|suffix| lower.ends_with(suffix))
+        || is_versioned(&lower)
+}
+
+/// A file named after a release, such as `jquery-3.7.1.js` or
+/// `jdenticon-3.3.0.min.js`: a copy of somebody else's library. The version
+/// needs at least two dotted parts, so `schema.v2.ts` or `0001_initial.py`
+/// are not caught.
+fn is_versioned(name: &str) -> bool {
+    let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+    let stem = stem.strip_suffix(".min").unwrap_or(stem);
+    let Some(split) = stem.rfind(['-', '_', '@']) else {
+        return false;
+    };
+    let version = stem[split + 1..].trim_start_matches('v');
+    let parts: Vec<_> = version.split('.').collect();
+    parts.len() >= 2
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 /// The repository tally as of the last scan, read back from the snapshot
@@ -412,5 +433,32 @@ fn stack_label(name: &str) -> Option<&'static str> {
         other if other.starts_with("@angular/") => Some("angular"),
         other if other.starts_with("@sveltejs/") => Some("svelte"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_file_named_after_a_release_is_vendored() {
+        for name in [
+            "jquery-3.7.1.js",
+            "jdenticon-3.3.0.js",
+            "lib_v1.2.min.js",
+            "vue@3.4.0.mjs",
+        ] {
+            assert!(is_versioned(name), "{name}");
+        }
+        for name in [
+            "schema.v2.ts",
+            "0001_initial.py",
+            "app-2.ts",
+            "admin.js",
+            "v1.rs",
+            "a-.js",
+        ] {
+            assert!(!is_versioned(name), "{name}");
+        }
     }
 }

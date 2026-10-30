@@ -129,16 +129,50 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 ## Step 3: Rust
 
-- [ ] Analyzers for the four Rust dimensions, as `ast/analyzers/rust.rs`.
+- [x] Analyzers for the four Rust dimensions, as `ast/analyzers/rust.rs`.
       `.unwrap()` on a `Mutex` lock or in `main` of a binary is common and
       defensible; count only library code outside `main` and tests.
-- [ ] Detectors: `super::` ↔ `crate::` rewrite; `.unwrap()` → `?`;
+      Test items (`#[test]`, `#[cfg(test)]`, `#[…::test]`) are skipped for
+      every dimension; `fn main`, `main.rs` and `src/bin/` are skipped for
+      errors and logging. Also not counted: `.lock()`/`.read()`/`.write()`
+      unwraps, unwraps inside statics or `get_or_init`/`Lazy` closures,
+      `if … else` whose branches produce a value (Rust's conditional
+      expression), and `info!`-style macros not qualified with or imported
+      from `tracing`/`log`. Only `use` paths are symmetric.
+- [x] Detectors: `super::` ↔ `crate::` rewrite; `.unwrap()` → `?`;
       `println!` → `tracing`/`log`; nested `if`/`else` → guard clause or
-      `let … else`.
-- [ ] Fixtures under `tests/fixtures/rust/`.
-- [ ] Turn Rust on in `has_analyzers`.
+      `let … else`. (`diff/rust.rs`, same exclusions as the scan.)
+- [x] Fixtures under `tests/fixtures/rust/`.
+- [x] Turn Rust on in `has_analyzers`.
 - [ ] **Precision gate:** three real Rust projects (a library, a CLI, a web
       service). OpenTaste itself may be one of them.
+      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 on shallow clones.
+
+      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | --- | --- | --- | --- | --- |
+      | BurntSushi/ripgrep (CLI) | Rust: `?` over unwrap/expect | 476 · 79, 45 files | yes | library crates propagate; binary files not counted |
+      | ″ | Rust: `crate::` over `super::` | 59 · 2, 48 files | yes | |
+      | ″ | Rust: `tracing`/`log` over `println!` | 77 · 2, 24 files | yes | 54 × `log::debug!`, 23 × `log::trace!`; the two `println!` are in a doc example and test util |
+      | dani-garcia/vaultwarden (web service) | Rust: `?` over unwrap/expect | 780 · 179, 53 files | yes | |
+      | ″ | TS/JS: `function` declarations | 83 · 7, 13 files | yes, after a fix | see below |
+      | OpenTaste (library + CLI) | Rust: `?` over unwrap/expect | 322 · 2, 36 files | yes | `taste-core` returns typed errors |
+      | ″ | Rust: `crate::` over `super::` | 95 · 17, 43 files | yes | |
+      | ″ | Rust: guard clauses and `let … else` | 102 · 19, 35 files | yes | |
+      | ″ | TS: named exports | 49 · 0, 19 files | yes | |
+      | ″ | TS: guard clauses | 20 · 4, 11 files | yes | |
+
+      serde-rs/json (library) emitted nothing, correctly: `crate::` and
+      `super::` are an even split (45 · 44) and it propagates with its own
+      `tri!` macro rather than `?`.
+
+      **Wrong rule found and fixed.** The first run gave vaultwarden "prefer
+      `function` declarations" at 97% from 355 · 12, almost all of it from
+      vendored libraries in `src/static/scripts/` (`datatables.js`, 13,000
+      lines; `jdenticon-3.3.0.js`). The scanner now skips files over 256 KiB
+      (was 1 MiB) and files named after a release (`name-1.2.3.js`). Test:
+      `vendored_and_oversized_scripts_do_not_count`. After the fix the rule
+      rests on the project's own `admin*.js`, which use `function`
+      declarations throughout.
 
 ## Step 4: Go
 
@@ -154,14 +188,15 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 ## Step 5: The full test set
 
 - [ ] Every analyzer: a unanimous file, a mixed file, and a file that must
-      count nothing. (Python done.)
+      count nothing. (Python and Rust done.)
 - [ ] Every detector: one positive and one negative fixture.
 - [ ] Test code, scripts and `main` excluded where the step says so.
+      (Python and Rust done.)
 - [ ] A mixed-language repository (TS + Python + Go) produces separate rules
       per language and none that crosses languages. (TS + Python done:
       `a_mixed_repository_keeps_each_languages_rules_apart`.)
 - [ ] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
-      from a `.py`, `.rs` and `.go` correction. (`.py` done.)
+      from a `.py`, `.rs` and `.go` correction. (`.py` and `.rs` done.)
 
 ---
 

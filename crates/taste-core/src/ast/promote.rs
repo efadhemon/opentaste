@@ -12,7 +12,7 @@
 use crate::models::{RuleCategory, RuleSource};
 use crate::storage::{validate_scope, Observation};
 
-use super::{Family, PythonTally, ScriptTally, Tally};
+use super::{Family, PythonTally, RustTally, ScriptTally, Tally};
 
 /// Minimum share of occurrences the winning side must hold.
 pub const MIN_RATIO: f32 = 0.80;
@@ -54,8 +54,20 @@ pub const PY_PREFER_ANNOTATIONS: &str =
 pub const PY_PREFER_CUSTOM_DECORATORS: &str =
     "In Python, prefer the project's own decorators over framework decorators.";
 
+pub const RS_PREFER_CRATE_PATHS: &str =
+    "In Rust, prefer `crate::` paths over `super::` paths in `use` declarations.";
+pub const RS_PREFER_SUPER_PATHS: &str =
+    "In Rust, prefer `super::` paths over `crate::` paths in `use` declarations.";
+pub const RS_PREFER_QUESTION_MARK: &str =
+    "In Rust library code, propagate errors with `?` instead of `.unwrap()` or `.expect()`.";
+pub const RS_PREFER_LOG_MACROS: &str =
+    "In Rust library code, log with `tracing` or `log` macros instead of `println!` or `eprintln!`.";
+pub const RS_PREFER_GUARD_CLAUSES: &str =
+    "In Rust, prefer early `return` and `let … else` guards over nested if/else blocks.";
+
 const SCRIPT_SCOPE: &str = Family::Script.scope();
 const PYTHON_SCOPE: &str = Family::Python.scope();
+const RUST_SCOPE: &str = Family::Rust.scope();
 const TYPESCRIPT_SCOPE: &str = "**/*.{ts,tsx}";
 
 /// Observations the tally is strong enough to support, in a stable order.
@@ -69,8 +81,44 @@ pub fn observations(tally: &Tally) -> Vec<Observation> {
     push(&mut found, control_flow(script));
     push(&mut found, decorators(script));
     push(&mut found, errors(script));
-    for observation in python(&tally.python) {
+    for observation in python(&tally.python).into_iter().chain(rust(&tally.rust)) {
         push(&mut found, Some(observation));
+    }
+    found
+}
+
+/// Rust's dimensions. Only `use` paths are symmetric.
+fn rust(tally: &RustTally) -> Vec<Observation> {
+    let mut found = Vec::new();
+    if let Some((left_wins, ratio)) = choose(tally.imports, true) {
+        let instruction = if left_wins {
+            RS_PREFER_CRATE_PATHS
+        } else {
+            RS_PREFER_SUPER_PATHS
+        };
+        found.push(observed(
+            RuleCategory::Imports,
+            RUST_SCOPE,
+            instruction,
+            ratio,
+        ));
+    }
+    for (count, category, instruction) in [
+        (
+            tally.errors,
+            RuleCategory::ErrorHandling,
+            RS_PREFER_QUESTION_MARK,
+        ),
+        (tally.logging, RuleCategory::CodeStyle, RS_PREFER_LOG_MACROS),
+        (
+            tally.control_flow,
+            RuleCategory::CodeStyle,
+            RS_PREFER_GUARD_CLAUSES,
+        ),
+    ] {
+        if let Some((_, ratio)) = choose(count, false) {
+            found.push(observed(category, RUST_SCOPE, instruction, ratio));
+        }
     }
     found
 }
@@ -268,6 +316,8 @@ pub fn opposite_instruction(instruction: &str) -> Option<&'static str> {
         PREFER_ARROW_FUNCTIONS => PREFER_FUNCTION_DECLARATIONS,
         PY_PREFER_ABSOLUTE_IMPORTS => PY_PREFER_RELATIVE_IMPORTS,
         PY_PREFER_RELATIVE_IMPORTS => PY_PREFER_ABSOLUTE_IMPORTS,
+        RS_PREFER_CRATE_PATHS => RS_PREFER_SUPER_PATHS,
+        RS_PREFER_SUPER_PATHS => RS_PREFER_CRATE_PATHS,
         _ => return None,
     })
 }
@@ -411,5 +461,29 @@ mod tests {
             ..Tally::default()
         };
         assert!(observations(&tally).is_empty());
+    }
+
+    #[test]
+    fn rust_counts_promote_rust_rules_scoped_to_rust_files() {
+        let tally = Tally {
+            rust: RustTally {
+                imports: files(40, 2, 15),
+                errors: files(90, 10, 12),
+                logging: files(2, 40, 10),
+                ..RustTally::default()
+            },
+            ..Tally::default()
+        };
+        let promoted = observations(&tally);
+        let instructions: Vec<_> = promoted.iter().map(|o| o.instruction.as_str()).collect();
+        assert_eq!(
+            instructions,
+            vec![RS_PREFER_CRATE_PATHS, RS_PREFER_QUESTION_MARK]
+        );
+        assert!(promoted.iter().all(|o| o.scope == "**/*.rs"));
+        assert_eq!(
+            opposite_instruction(RS_PREFER_SUPER_PATHS),
+            Some(RS_PREFER_CRATE_PATHS)
+        );
     }
 }

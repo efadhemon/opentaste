@@ -308,3 +308,47 @@ fn a_python_scope_is_derived_like_any_other() {
     let found = analyze(&before, &after, Path::new("app/tests/test_orders.py")).unwrap();
     assert_eq!(found[0].scope, "app/**/test_*.py");
 }
+
+#[test]
+fn rust_super_path_becoming_a_crate_path_is_detected() {
+    fires(
+        "rust/use-path-rewrite",
+        "src/users/service.rs",
+        "`crate::` paths",
+    );
+}
+
+#[test]
+fn rust_unwrap_becoming_a_question_mark_is_detected() {
+    fires("rust/unwrap-to-question", "src/config.rs", "`?`");
+}
+
+#[test]
+fn rust_println_becoming_a_log_macro_is_detected() {
+    fires("rust/print-to-log", "src/sync.rs", "`tracing`");
+}
+
+#[test]
+fn rust_else_becoming_let_else_is_detected() {
+    fires("rust/guard-clause", "src/orders.rs", "`let … else`");
+}
+
+#[test]
+fn rust_corrections_in_tests_main_or_a_binary_are_not_learned() {
+    let (before, after) = pair_of("rust/unwrap-to-question", "rs", false);
+    for path in ["src/main.rs", "src/bin/tool.rs"] {
+        let found = analyze(&before, &after, Path::new(path)).unwrap();
+        assert!(found.is_empty(), "{path}: {found:?}");
+    }
+    let wrap = |body: &str| format!("#[cfg(test)]\nmod tests {{\n{body}}}\n");
+    let found = analyze(&wrap(&before), &wrap(&after), Path::new("src/config.rs")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+    let in_main = |body: &str| body.replace("pub fn load", "fn main");
+    let found = analyze(
+        &in_main(&before),
+        &in_main(&after),
+        Path::new("src/config.rs"),
+    )
+    .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}

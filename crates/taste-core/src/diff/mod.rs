@@ -6,6 +6,7 @@
 
 mod contradiction;
 mod python;
+mod rust;
 mod scrubber;
 mod structural;
 

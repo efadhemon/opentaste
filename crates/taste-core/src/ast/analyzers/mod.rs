@@ -7,6 +7,7 @@ mod arch;
 mod functions;
 mod imports;
 pub(crate) mod python;
+pub(crate) mod rust;
 mod types;
 
 pub(crate) use arch::{decorator_name, is_custom_error, is_framework_decorator};
@@ -364,8 +365,9 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
             }
         }
         Family::Python => tally.python = python::tally(path, tree, source),
-        // Their analyzers land in phase 8 steps 3 and 4.
-        Family::Rust | Family::Go => {}
+        Family::Rust => tally.rust = rust::tally(path, tree, source),
+        // Its analyzers land in phase 8 step 4.
+        Family::Go => {}
     }
     tally
 }

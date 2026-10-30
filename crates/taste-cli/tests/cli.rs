@@ -433,6 +433,34 @@ fn learn_delta_learns_from_a_python_correction() {
         .contains("`logging`"));
 }
 
+const UNWRAP_BEFORE: &str = "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path).unwrap();\n    Ok(text)\n}\n";
+const UNWRAP_AFTER: &str = "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path)?;\n    Ok(text)\n}\n";
+
+#[test]
+fn learn_from_git_head_learns_from_a_rust_correction() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "src/config.rs", UNWRAP_BEFORE);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    commit(root, "src/config.rs", UNWRAP_AFTER);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
+}
+
+#[test]
+fn learn_delta_learns_from_a_rust_correction() {
+    let dir = initialised();
+    let value = learn_delta(dir.path(), "src/config.rs", UNWRAP_BEFORE, UNWRAP_AFTER);
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1, "{value}");
+    assert!(candidates[0]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("`?`"));
+}
+
 #[test]
 fn learn_from_git_head_decays_a_rule_whose_anti_pattern_the_commit_added() {
     let dir = git_repo();

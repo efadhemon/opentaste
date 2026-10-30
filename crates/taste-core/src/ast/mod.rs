@@ -11,6 +11,7 @@ mod roles;
 mod scan;
 
 pub(crate) use analyzers::python;
+pub(crate) use analyzers::rust;
 pub use analyzers::{
     analyze_source, Count, Dimension, GoTally, PythonTally, RustTally, ScriptTally, Tally,
 };
@@ -22,7 +23,8 @@ pub use promote::{
     PREFER_FUNCTION_DECLARATIONS, PREFER_GUARD_CLAUSES, PREFER_INTERFACE, PREFER_NAMED_EXPORTS,
     PREFER_PATH_ALIASES, PREFER_TYPE_ALIAS, PY_PREFER_ABSOLUTE_IMPORTS, PY_PREFER_ANNOTATIONS,
     PY_PREFER_CUSTOM_DECORATORS, PY_PREFER_CUSTOM_EXCEPTIONS, PY_PREFER_GUARD_CLAUSES,
-    PY_PREFER_LOGGING, PY_PREFER_RELATIVE_IMPORTS,
+    PY_PREFER_LOGGING, PY_PREFER_RELATIVE_IMPORTS, RS_PREFER_CRATE_PATHS, RS_PREFER_GUARD_CLAUSES,
+    RS_PREFER_LOG_MACROS, RS_PREFER_QUESTION_MARK, RS_PREFER_SUPER_PATHS,
 };
 pub(crate) use query::{
     import_locals, is_package_specifier, matches, node_text, unquote, ScriptQuery,

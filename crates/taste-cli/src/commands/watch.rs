@@ -249,8 +249,9 @@ mod tests {
         assert_eq!(rel(".git/index"), Relevance::Ignore);
         assert_eq!(rel("README.md"), Relevance::Ignore);
         assert_eq!(rel("app/users.py"), Relevance::Source);
+        assert_eq!(rel("src/lib.rs"), Relevance::Source);
         assert_eq!(
-            rel("src/lib.rs"),
+            rel("cmd/main.go"),
             Relevance::Ignore,
             "only languages with analyzers are scanned"
         );

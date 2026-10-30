@@ -4,7 +4,9 @@ mod common;
 
 use common::Project;
 use taste_core::ast::stored_tally;
-use taste_core::ast::{PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING};
+use taste_core::ast::{
+    PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING, RS_PREFER_QUESTION_MARK,
+};
 use taste_core::scan;
 
 fn write_imports(project: &Project, alias: usize, relative: usize) {
@@ -295,18 +297,11 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
 fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
-    project.write("src/main.rs", "fn main() {}\n");
     project.write("cmd/gen.go", "package main\nfunc main() {}\n");
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1);
     assert_eq!(report.files_skipped, 0);
-    assert!(project
-        .store
-        .candidates()
-        .get_snapshot("src/main.rs")
-        .unwrap()
-        .is_none());
     assert!(project
         .store
         .candidates()
@@ -388,4 +383,56 @@ fn a_mixed_repository_keeps_each_languages_rules_apart() {
     // Nothing the TypeScript files counted leaked into the Python tally.
     assert_eq!(report.tallies.python.imports.files, 0);
     assert_eq!(report.tallies.script.import_paths.files, 10);
+}
+
+#[test]
+fn a_rust_library_promotes_question_marks_and_ignores_its_tests() {
+    let project = Project::with_cache_db();
+    project.write("Cargo.toml", "[package]\nname = \"lib\"\n");
+    for index in 0..10 {
+        project.write(
+            &format!("src/module{index}.rs"),
+            "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path)?;\n    Ok(text)\n}\n\
+             #[cfg(test)]\nmod tests {\n    #[test]\n    fn loads() {\n        load(p).unwrap();\n        load(q).unwrap();\n    }\n}\n",
+        );
+        project.write(
+            &format!("tests/it{index}.rs"),
+            "#[test]\nfn works() {\n    lib::load(p).unwrap();\n}\nfn helper() {\n    x().unwrap();\n    y().unwrap();\n}\n",
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "integration tests are not read");
+    assert_eq!(
+        report.tallies.rust.errors,
+        taste_core::ast::Count {
+            left: 10,
+            right: 0,
+            files: 10
+        }
+    );
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    assert!(
+        rules
+            .iter()
+            .any(|rule| rule.instruction == RS_PREFER_QUESTION_MARK && rule.scope == "**/*.rs"),
+        "{rules:?}"
+    );
+}
+
+#[test]
+fn vendored_and_oversized_scripts_do_not_count() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    let arrows = "export const a = () => 1;\n".repeat(20);
+    project.write("src/static/jdenticon-3.3.0.js", &arrows);
+    let huge = "export const a = () => 1;\n".repeat(11_000);
+    assert!(huge.len() > 256 * 1024);
+    project.write("src/static/datatables.js", &huge);
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.tallies.script.function_syntax.files, 0);
 }
