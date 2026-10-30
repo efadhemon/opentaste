@@ -61,7 +61,8 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
     for dimension in measured {
         let count = dimension.count;
         out.say(format!(
-            "  {:<13} {} {} · {} {} · {} file{}",
+            "  {:<6} {:<13} {} {} · {} {} · {} file{}",
+            dimension.family.name(),
             dimension.name,
             dimension.left,
             count.left,

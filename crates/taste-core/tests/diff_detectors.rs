@@ -10,7 +10,9 @@ use std::path::Path;
 use taste_core::analyze;
 use taste_core::models::RuleSource;
 
-fn pair(detector: &str, negative: bool) -> (String, String) {
+/// `before.<ext>` and `after.<ext>` under `tests/fixtures/<detector>`, or its
+/// `negative/` directory.
+fn pair_of(detector: &str, ext: &str, negative: bool) -> (String, String) {
     let mut dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(detector);
@@ -18,13 +20,14 @@ fn pair(detector: &str, negative: bool) -> (String, String) {
         dir.push("negative");
     }
     (
-        fs::read_to_string(dir.join("before.ts")).unwrap(),
-        fs::read_to_string(dir.join("after.ts")).unwrap(),
+        fs::read_to_string(dir.join(format!("before.{ext}"))).unwrap(),
+        fs::read_to_string(dir.join(format!("after.{ext}"))).unwrap(),
     )
 }
 
 fn fires(detector: &str, path: &str, needle: &str) {
-    let (before, after) = pair(detector, false);
+    let ext = Path::new(path).extension().unwrap().to_str().unwrap();
+    let (before, after) = pair_of(detector, ext, false);
     let found = analyze(&before, &after, Path::new(path)).unwrap();
     assert_eq!(found.len(), 1, "{detector} positive: {found:?}");
     assert_eq!(found[0].source, RuleSource::AstDiff);
@@ -37,7 +40,7 @@ fn fires(detector: &str, path: &str, needle: &str) {
     assert!(found[0].preferred_pattern.is_some());
     assert_ne!(found[0].scope, "**/*");
 
-    let (before, after) = pair(detector, true);
+    let (before, after) = pair_of(detector, ext, true);
     let found = analyze(&before, &after, Path::new(path)).unwrap();
     assert!(
         found.is_empty(),
@@ -47,37 +50,41 @@ fn fires(detector: &str, path: &str, needle: &str) {
 
 #[test]
 fn decorator_swap_fires_only_when_the_decorator_name_changes() {
-    fires("decorator-swap", "src/users/user.entity.ts", "AutoEntity");
+    fires(
+        "typescript/decorator-swap",
+        "src/users/user.entity.ts",
+        "AutoEntity",
+    );
 }
 
 #[test]
 fn import_rewrite_fires_only_when_relative_becomes_alias() {
-    fires("import-rewrite", "src/app.ts", "path aliases");
+    fires("typescript/import-rewrite", "src/app.ts", "path aliases");
 }
 
 #[test]
 fn logger_replacement_fires_only_when_console_becomes_a_logger() {
-    fires("logger-replacement", "src/app.ts", "logger");
+    fires("typescript/logger-replacement", "src/app.ts", "logger");
 }
 
 #[test]
 fn type_swap_fires_only_when_interface_becomes_type() {
-    fires("type-swap", "src/app.ts", "type");
+    fires("typescript/type-swap", "src/app.ts", "type");
 }
 
 #[test]
 fn function_syntax_fires_only_when_a_declaration_becomes_an_arrow() {
-    fires("function-syntax", "src/app.ts", "arrow");
+    fires("typescript/function-syntax", "src/app.ts", "arrow");
 }
 
 #[test]
 fn error_class_fires_only_when_bare_error_becomes_a_custom_class() {
-    fires("error-class", "src/app.ts", "custom error");
+    fires("typescript/error-class", "src/app.ts", "custom error");
 }
 
 #[test]
 fn control_flow_fires_only_when_else_becomes_a_guard() {
-    fires("control-flow", "src/app.ts", "guard");
+    fires("typescript/control-flow", "src/app.ts", "guard");
 }
 
 #[test]
@@ -253,4 +260,136 @@ fn any_package_manifest_marks_a_package() {
         scopes_in(dir.path(), "services/billing/web/user.service.ts"),
         vec!["services/billing/**/*.service.ts".to_string()]
     );
+}
+
+#[test]
+fn python_relative_import_becoming_first_party_absolute_is_detected() {
+    fires(
+        "python/import-rewrite",
+        "src/myapp/users/views.py",
+        "absolute imports",
+    );
+}
+
+#[test]
+fn python_bare_exception_becoming_a_project_exception_is_detected() {
+    fires(
+        "python/exception-class",
+        "src/myapp/users/service.py",
+        "exception classes",
+    );
+}
+
+#[test]
+fn python_print_becoming_a_logger_call_is_detected() {
+    fires("python/print-to-logger", "src/myapp/sync.py", "`logging`");
+}
+
+#[test]
+fn python_else_becoming_a_guard_clause_is_detected() {
+    fires(
+        "python/guard-clause",
+        "src/myapp/orders.py",
+        "guard clauses",
+    );
+}
+
+#[test]
+fn a_python_import_moved_outside_the_files_own_package_is_not_a_taste() {
+    // `other` is not a directory this file lives in, so it is a package.
+    let found = analyze(
+        "from .models import User\n",
+        "from other.models import User\n",
+        Path::new("src/myapp/users/views.py"),
+    )
+    .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_python_scope_is_derived_like_any_other() {
+    let (before, after) = pair_of("python/guard-clause", "py", false);
+    let found = analyze(&before, &after, Path::new("app/tests/test_orders.py")).unwrap();
+    assert_eq!(found[0].scope, "app/**/test_*.py");
+}
+
+#[test]
+fn rust_super_path_becoming_a_crate_path_is_detected() {
+    fires(
+        "rust/use-path-rewrite",
+        "src/users/service.rs",
+        "`crate::` paths",
+    );
+}
+
+#[test]
+fn rust_unwrap_becoming_a_question_mark_is_detected() {
+    fires("rust/unwrap-to-question", "src/config.rs", "`?`");
+}
+
+#[test]
+fn rust_println_becoming_a_log_macro_is_detected() {
+    fires("rust/print-to-log", "src/sync.rs", "`tracing`");
+}
+
+#[test]
+fn rust_else_becoming_let_else_is_detected() {
+    fires("rust/guard-clause", "src/orders.rs", "`let … else`");
+}
+
+#[test]
+fn rust_corrections_in_tests_main_or_a_binary_are_not_learned() {
+    let (before, after) = pair_of("rust/unwrap-to-question", "rs", false);
+    for path in ["src/main.rs", "src/bin/tool.rs"] {
+        let found = analyze(&before, &after, Path::new(path)).unwrap();
+        assert!(found.is_empty(), "{path}: {found:?}");
+    }
+    let wrap = |body: &str| format!("#[cfg(test)]\nmod tests {{\n{body}}}\n");
+    let found = analyze(&wrap(&before), &wrap(&after), Path::new("src/config.rs")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+    let in_main = |body: &str| body.replace("pub fn load", "fn main");
+    let found = analyze(
+        &in_main(&before),
+        &in_main(&after),
+        Path::new("src/config.rs"),
+    )
+    .unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn go_bare_error_becoming_a_wrapped_one_is_detected() {
+    fires("go/bare-to-wrapped", "internal/config/config.go", "%w");
+}
+
+#[test]
+fn go_println_becoming_slog_is_detected() {
+    fires(
+        "go/print-to-structured",
+        "internal/sync/run.go",
+        "structured logger",
+    );
+}
+
+#[test]
+fn go_else_becoming_an_early_return_is_detected() {
+    fires(
+        "go/guard-clause",
+        "internal/orders/price.go",
+        "early returns",
+    );
+}
+
+#[test]
+fn a_go_print_replaced_under_cmd_is_not_learned() {
+    let (before, after) = pair_of("go/print-to-structured", "go", false);
+    let found = analyze(&before, &after, Path::new("cmd/sync/run.go")).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_go_test_file_is_scoped_to_test_files() {
+    let (before, after) = pair_of("go/guard-clause", "go", false);
+    let found = analyze(&before, &after, Path::new("internal/orders/price_test.go")).unwrap();
+    assert_eq!(found[0].scope, "internal/**/*_test.go");
 }

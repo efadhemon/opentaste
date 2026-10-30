@@ -294,6 +294,95 @@ fn independent_preferences_accumulate_side_by_side() {
 }
 
 #[test]
+fn a_correction_in_one_package_never_reinforces_another_packages_rule() {
+    let project = Project::with_cache_db();
+    let instruction = "Prefer custom error classes over throwing bare `Error`.";
+    let observe = |scope: &str| {
+        project
+            .store
+            .record_observation(Observation::new(
+                RuleCategory::ErrorHandling,
+                scope,
+                RuleSource::AstDiff,
+                instruction,
+            ))
+            .unwrap()
+    };
+
+    assert!(matches!(
+        observe("apps/nextjs/**/*.tsx"),
+        Outcome::Created { .. }
+    ));
+    assert!(
+        matches!(
+            observe("apps/tanstack-start/**/*.tsx"),
+            Outcome::Created { .. }
+        ),
+        "a second package starts its own candidate"
+    );
+
+    let mut candidates = project.store.candidate_rules().unwrap();
+    candidates.sort_by(|a, b| a.scope.cmp(&b.scope));
+    let scopes: Vec<_> = candidates
+        .iter()
+        .map(|c| (c.scope.as_str(), c.occurrences))
+        .collect();
+    assert_eq!(
+        scopes,
+        vec![
+            ("apps/nextjs/**/*.tsx", 1),
+            ("apps/tanstack-start/**/*.tsx", 1)
+        ]
+    );
+    assert_ne!(candidates[0].id, candidates[1].id);
+}
+
+#[test]
+fn a_chat_phrasing_of_a_detected_edit_reinforces_the_same_candidate() {
+    let project = Project::with_cache_db();
+    let observe = |instruction: &str, anti: &str, preferred: &str| {
+        project
+            .store
+            .record_observation(
+                Observation::new(
+                    RuleCategory::CodeStyle,
+                    "src/**/*.ts",
+                    RuleSource::AstDiff,
+                    instruction,
+                )
+                .with_patterns(Some(anti.to_string()), Some(preferred.to_string())),
+            )
+            .unwrap()
+    };
+
+    observe(
+        "Prefer a logger service over `console.log` and `console.error`.",
+        "console.log(user)",
+        "logger.info(user)",
+    );
+    let outcome = observe(
+        "Write to the logger, never to the console.",
+        "console.log(order)",
+        "logger.info(order)",
+    );
+    assert!(
+        matches!(outcome, Outcome::Reinforced { occurrences: 2, .. }),
+        "{outcome:?}"
+    );
+
+    observe(
+        "Write to the logger, never to the console.",
+        "console.error(order)",
+        "logger.error(order)",
+    );
+    assert_eq!(
+        project.store.candidate_rules().unwrap().len(),
+        2,
+        "a different call is a different edit, and its wording matches neither"
+    );
+}
+
+#[test]
 fn the_store_survives_being_reopened_between_observations() {
     let dir = tempfile::tempdir().unwrap();
     let paths = taste_core::config::Paths::for_root(dir.path());

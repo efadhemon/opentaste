@@ -1,6 +1,6 @@
 # Phase 7: Correctness of the learning pipeline
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -174,13 +174,43 @@ step.
 
 ## Definition of done
 
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` clean.
-- [ ] `pnpm -r run typecheck` and `pnpm -r run test` green if step 4 touched
+- [x] `pnpm -r run typecheck` and `pnpm -r run test` green if step 4 touched
       the extension.
-- [ ] SPEC.md §5.1 and §9 match the code.
-- [ ] **Manual gate:** run `taste init` on a real monorepo, replay its last
+- [x] SPEC.md §5.1 and §9 match the code.
+- [x] **Manual gate:** run `taste init` on a real monorepo, replay its last
       20 commits through `taste learn --from-git-head`, and confirm every
       rule's scope names the right package and nothing was counted twice.
-- [ ] The W3–W12 and M10 rows in V1-AUDIT.md marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] The W3–W12 and M10 rows in V1-AUDIT.md marked fixed.
+- [x] Status at the top of this file set to `completed`.
+
+## Manual gate record (2026-10-30)
+
+Run on [t3-oss/create-t3-turbo](https://github.com/t3-oss/create-t3-turbo)
+(pnpm workspace: `apps/{expo,nextjs,tanstack-start}`, `packages/{api,auth,db,ui,validators}`).
+`taste init` at the parent of `337195b`, then the 20 non-merge commits up to
+`8f945b7` cherry-picked one by one, each followed by `taste learn
+--from-git-head` run twice.
+
+- `taste init`: stack `drizzle, next, react, typescript`; two scan rules
+  (path aliases 100%, named exports 82%), both project-wide as scan rules are.
+- The 20 real commits taught nothing. Correct: they are dependency bumps,
+  config edits, and one re-export rewrite (`406737d`), which W8 stopped
+  counting. Every rerun said "Nothing to learn" or "Already learned".
+- Real files in three packages were then corrected and committed:
+  `console.log` → `logger.info` in `packages/api`, and `throw new Error` →
+  `throw new AuthError` in `apps/nextjs` and `apps/tanstack-start`.
+  **First run failed the gate:** the `apps/tanstack-start` correction
+  reinforced the `apps/nextjs/**/*.tsx` candidate (0.45 → 0.56, seen 2 times),
+  because `rule_id` hashed category and instruction only, so the exact-id
+  lookup skipped the scope check. Fixed by hashing the scope into the id;
+  the opposite-rule check still matches on instruction alone, so a
+  package-scoped correction still conflicts with a project-wide scan rule.
+  Test: `a_correction_in_one_package_never_reinforces_another_packages_rule`.
+- After the fix: three candidates, `packages/api/**/*.ts`,
+  `apps/nextjs/**/*.tsx`, `apps/tanstack-start/**/*.tsx`, each seen once.
+  `--amend` and a cherry-pick of the same change onto another branch both
+  said "Already learned". A `learn-delta` on `packages/auth/src/index.ts`
+  followed by committing the same edit counted once ("already learned from
+  the editor").

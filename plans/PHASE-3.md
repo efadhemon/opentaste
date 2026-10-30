@@ -384,6 +384,8 @@ wrong, and you will not notice four layers later.
 - [x] Fixture-driven detector tests in
       `crates/taste-core/tests/fixtures/<detector>/{before,after}.ts`. Each
       detector gets a positive case **and** a negative case that must not fire.
+      (Since phase 8 these live under `fixtures/typescript/`, beside
+      `python/`, `rust/` and `go/`.)
 - [x] A scrubber test where a snippet contains a credential, asserting the
       credential is gone and the surrounding identifiers survive intact.
 - [x] A scrubber test over the allowlist shapes asserting a UUID and a semver

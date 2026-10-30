@@ -4,7 +4,10 @@ mod common;
 
 use common::Project;
 use taste_core::ast::stored_tally;
-use taste_core::ast::PREFER_PATH_ALIASES;
+use taste_core::ast::{
+    GO_PREFER_WRAPPED_ERRORS, PREFER_PATH_ALIASES, PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING,
+    RS_PREFER_QUESTION_MARK,
+};
 use taste_core::scan;
 
 fn write_imports(project: &Project, alias: usize, relative: usize) {
@@ -116,7 +119,7 @@ fn vendored_built_and_declaration_files_are_never_scanned() {
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1, "{report:?}");
-    assert_eq!(report.tallies.exports.files, 1);
+    assert_eq!(report.tallies.script.exports.files, 1);
 }
 
 #[test]
@@ -128,8 +131,8 @@ fn the_stored_tally_matches_the_scan_and_forgets_deleted_files() {
 
     std::fs::remove_file(project.paths.project_root.join("src/relative0.ts")).unwrap();
     let after = stored_tally(&project.store).unwrap();
-    assert_eq!(after.import_paths.right, 0);
-    assert_eq!(after.import_paths.left, 9);
+    assert_eq!(after.script.import_paths.right, 0);
+    assert_eq!(after.script.import_paths.left, 9);
 }
 
 #[test]
@@ -260,7 +263,14 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
     scan(&project.store).unwrap();
-    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 1);
+    assert_eq!(
+        stored_tally(&project.store)
+            .unwrap()
+            .script
+            .import_paths
+            .left,
+        1
+    );
 
     let big = format!(
         "import {{ a }} from \"@/lib/a\";\n{}",
@@ -274,15 +284,21 @@ fn a_file_that_grows_past_the_size_limit_stops_counting() {
         .get_snapshot("src/alias0.ts")
         .unwrap()
         .is_none());
-    assert_eq!(stored_tally(&project.store).unwrap().import_paths.left, 0);
+    assert_eq!(
+        stored_tally(&project.store)
+            .unwrap()
+            .script
+            .import_paths
+            .left,
+        0
+    );
 }
 
 #[test]
-fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
+fn an_unsupported_language_is_neither_read_nor_snapshotted() {
     let project = Project::with_cache_db();
     write_imports(&project, 1, 0);
-    project.write("src/main.rs", "fn main() {}\n");
-    project.write("tools/gen.py", "print('hi')\n");
+    project.write("src/Gen.java", "class Gen {}\n");
 
     let report = scan(&project.store).unwrap();
     assert_eq!(report.files_scanned, 1);
@@ -290,13 +306,195 @@ fn a_language_without_analyzers_is_neither_read_nor_snapshotted() {
     assert!(project
         .store
         .candidates()
-        .get_snapshot("src/main.rs")
+        .get_snapshot("src/Gen.java")
         .unwrap()
         .is_none());
-    assert!(project
-        .store
-        .candidates()
-        .get_snapshot("tools/gen.py")
-        .unwrap()
-        .is_none());
+}
+
+/// Ten annotated, logging library modules under `src/myapp/`.
+fn write_python_library(project: &Project) {
+    for index in 0..10 {
+        project.write(
+            &format!("src/myapp/module{index}.py"),
+            "import logging\n\nlogger = logging.getLogger(__name__)\n\n\n\
+             def run(job: str) -> None:\n    logger.info(job)\n",
+        );
+    }
+}
+
+#[test]
+fn a_python_codebase_promotes_python_rules_scoped_to_python_files() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    let mut instructions: Vec<_> = rules.iter().map(|rule| rule.instruction.as_str()).collect();
+    instructions.sort();
+    let mut expected = vec![PY_PREFER_ANNOTATIONS, PY_PREFER_LOGGING];
+    expected.sort();
+    assert_eq!(instructions, expected, "{rules:?}");
+    assert!(rules.iter().all(|rule| rule.scope == "**/*.py"));
+}
+
+#[test]
+fn python_tests_and_scripts_do_not_count() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    // Enough print-heavy tests and scripts to sink the logging ratio if read.
+    for index in 0..10 {
+        let printing = "def check() -> None:\n    print('a')\n    print('b')\n    print('c')\n";
+        project.write(&format!("tests/test_module{index}.py"), printing);
+        project.write(&format!("scripts/task{index}.py"), printing);
+    }
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "tests and scripts are not read");
+    assert_eq!(report.tallies.python.logging.right, 0);
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .any(|rule| rule.instruction == PY_PREFER_LOGGING));
+}
+
+#[test]
+fn a_mixed_repository_keeps_each_languages_rules_apart() {
+    let project = Project::with_cache_db();
+    write_python_library(&project);
+    write_imports(&project, 10, 0);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    for rule in &rules {
+        let python = rule.instruction.starts_with("In Python");
+        assert_eq!(rule.scope == "**/*.py", python, "{rule:?}");
+    }
+    assert!(rules
+        .iter()
+        .any(|rule| rule.instruction == PREFER_PATH_ALIASES));
+    assert!(rules
+        .iter()
+        .any(|rule| rule.instruction == PY_PREFER_LOGGING));
+    // Nothing the TypeScript files counted leaked into the Python tally.
+    assert_eq!(report.tallies.python.imports.files, 0);
+    assert_eq!(report.tallies.script.import_paths.files, 10);
+}
+
+#[test]
+fn a_rust_library_promotes_question_marks_and_ignores_its_tests() {
+    let project = Project::with_cache_db();
+    project.write("Cargo.toml", "[package]\nname = \"lib\"\n");
+    for index in 0..10 {
+        project.write(
+            &format!("src/module{index}.rs"),
+            "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path)?;\n    Ok(text)\n}\n\
+             #[cfg(test)]\nmod tests {\n    #[test]\n    fn loads() {\n        load(p).unwrap();\n        load(q).unwrap();\n    }\n}\n",
+        );
+        project.write(
+            &format!("tests/it{index}.rs"),
+            "#[test]\nfn works() {\n    lib::load(p).unwrap();\n}\nfn helper() {\n    x().unwrap();\n    y().unwrap();\n}\n",
+        );
+    }
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "integration tests are not read");
+    assert_eq!(
+        report.tallies.rust.errors,
+        taste_core::ast::Count {
+            left: 10,
+            right: 0,
+            files: 10
+        }
+    );
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    assert!(
+        rules
+            .iter()
+            .any(|rule| rule.instruction == RS_PREFER_QUESTION_MARK && rule.scope == "**/*.rs"),
+        "{rules:?}"
+    );
+}
+
+#[test]
+fn vendored_and_oversized_scripts_do_not_count() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 1, 0);
+    let arrows = "export const a = () => 1;\n".repeat(20);
+    project.write("src/static/jdenticon-3.3.0.js", &arrows);
+    let huge = "export const a = () => 1;\n".repeat(11_000);
+    assert!(huge.len() > 256 * 1024);
+    project.write("src/static/datatables.js", &huge);
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 1);
+    assert_eq!(report.tallies.script.function_syntax.files, 0);
+}
+
+const GO_WRAPPING: &str = "package store\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\n\
+func Load(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, fmt.Errorf(\"load %s: %w\", p, err)\n\t}\n\treturn data, nil\n}\n";
+
+fn write_go_package(project: &Project) {
+    for index in 0..10 {
+        project.write(&format!("internal/store/load{index}.go"), GO_WRAPPING);
+        project.write(
+            &format!("internal/store/load{index}_test.go"),
+            "package store\n\nimport \"os\"\n\nfunc helper() error {\n\tif err := os.Remove(\"x\"); err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n",
+        );
+    }
+}
+
+#[test]
+fn a_go_codebase_promotes_wrapped_errors_and_ignores_its_tests() {
+    let project = Project::with_cache_db();
+    write_go_package(&project);
+    let report = scan(&project.store).unwrap();
+    assert_eq!(report.files_scanned, 10, "_test.go files are not read");
+    assert_eq!(report.tallies.go.errors.right, 0);
+    assert!(report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .any(|rule| rule.instruction == GO_PREFER_WRAPPED_ERRORS && rule.scope == "**/*.go"));
+}
+
+#[test]
+fn a_typescript_python_and_go_repository_keeps_every_languages_rules_apart() {
+    let project = Project::with_cache_db();
+    write_imports(&project, 10, 0);
+    write_python_library(&project);
+    write_go_package(&project);
+    let report = scan(&project.store).unwrap();
+    let rules: Vec<_> = report
+        .outcomes
+        .iter()
+        .filter_map(|outcome| outcome.promoted())
+        .collect();
+    for rule in &rules {
+        let expected = if rule.instruction.starts_with("In Python") {
+            "**/*.py"
+        } else if rule.instruction.starts_with("In Go") {
+            "**/*.go"
+        } else {
+            "**/*.{ts,tsx,js,jsx,mjs,cjs}"
+        };
+        assert_eq!(rule.scope, expected, "{rule:?}");
+    }
+    for instruction in [
+        PREFER_PATH_ALIASES,
+        PY_PREFER_LOGGING,
+        GO_PREFER_WRAPPED_ERRORS,
+    ] {
+        assert!(
+            rules.iter().any(|rule| rule.instruction == instruction),
+            "{instruction}"
+        );
+    }
 }

@@ -405,6 +405,90 @@ fn learn_from_git_head_records_what_the_last_commit_changed() {
     assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
 }
 
+const PRINT_BEFORE: &str = "import logging\n\nlogger = logging.getLogger(__name__)\n\n\ndef sync(batch):\n    print(\"synced\", batch)\n";
+const PRINT_AFTER: &str = "import logging\n\nlogger = logging.getLogger(__name__)\n\n\ndef sync(batch):\n    logger.info(\"synced\", batch)\n";
+
+#[test]
+fn learn_from_git_head_learns_from_a_python_correction() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "app/sync.py", PRINT_BEFORE);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    commit(root, "app/sync.py", PRINT_AFTER);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
+}
+
+#[test]
+fn learn_delta_learns_from_a_python_correction() {
+    let dir = initialised();
+    let value = learn_delta(dir.path(), "app/sync.py", PRINT_BEFORE, PRINT_AFTER);
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1, "{value}");
+    assert!(candidates[0]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("`logging`"));
+}
+
+const UNWRAP_BEFORE: &str = "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path).unwrap();\n    Ok(text)\n}\n";
+const UNWRAP_AFTER: &str = "pub fn load(path: &Path) -> Result<String, Error> {\n    let text = fs::read_to_string(path)?;\n    Ok(text)\n}\n";
+
+#[test]
+fn learn_from_git_head_learns_from_a_rust_correction() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "src/config.rs", UNWRAP_BEFORE);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    commit(root, "src/config.rs", UNWRAP_AFTER);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
+}
+
+#[test]
+fn learn_delta_learns_from_a_rust_correction() {
+    let dir = initialised();
+    let value = learn_delta(dir.path(), "src/config.rs", UNWRAP_BEFORE, UNWRAP_AFTER);
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1, "{value}");
+    assert!(candidates[0]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("`?`"));
+}
+
+const GO_BEFORE: &str = "package config\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc Load(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\treturn data, nil\n}\n\nvar _ = fmt.Sprint\n";
+const GO_AFTER: &str = "package config\n\nimport (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc Load(p string) ([]byte, error) {\n\tdata, err := os.ReadFile(p)\n\tif err != nil {\n\t\treturn nil, fmt.Errorf(\"load %s: %w\", p, err)\n\t}\n\treturn data, nil\n}\n\nvar _ = fmt.Sprint\n";
+
+#[test]
+fn learn_from_git_head_learns_from_a_go_correction() {
+    let dir = git_repo();
+    let root = dir.path();
+    assert!(taste(root, &["init", "--quiet"]).status.success());
+    commit(root, "internal/config/load.go", GO_BEFORE);
+    assert!(taste(root, &["learn", "--from-git-head"]).status.success());
+    commit(root, "internal/config/load.go", GO_AFTER);
+    let output = taste(root, &["learn", "--from-git-head"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(stdout(&output).contains("candidate"), "{}", stdout(&output));
+}
+
+#[test]
+fn learn_delta_learns_from_a_go_correction() {
+    let dir = initialised();
+    let value = learn_delta(dir.path(), "internal/config/load.go", GO_BEFORE, GO_AFTER);
+    let candidates = value["candidates"].as_array().unwrap();
+    assert_eq!(candidates.len(), 1, "{value}");
+    assert!(candidates[0]["instruction"]
+        .as_str()
+        .unwrap()
+        .contains("%w"));
+}
+
 #[test]
 fn learn_from_git_head_decays_a_rule_whose_anti_pattern_the_commit_added() {
     let dir = git_repo();

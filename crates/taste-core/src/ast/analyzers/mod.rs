@@ -5,17 +5,21 @@
 
 mod arch;
 mod functions;
+pub(crate) mod go;
 mod imports;
+pub(crate) mod python;
+pub(crate) mod rust;
 mod types;
 
 pub(crate) use arch::{decorator_name, is_custom_error, is_framework_decorator};
 
 use std::ops::AddAssign;
+use std::path::Path;
 
 use tree_sitter::Tree;
 
 use super::query::{self, ScriptQuery};
-use super::SupportedLanguage;
+use super::{Family, SupportedLanguage};
 
 /// One side of a binary choice, plus how many files contributed to it.
 ///
@@ -50,9 +54,9 @@ impl AddAssign for Count {
     }
 }
 
-/// Raw counts for every dimension the cold-start scanner measures.
+/// Counts for TypeScript, TSX and JavaScript files.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Tally {
+pub struct ScriptTally {
     /// `left` is `@/` or `~/`. `right` is a deep relative path (`../../`).
     pub import_paths: Count,
     /// `left` is a named export. `right` is a default export.
@@ -69,21 +73,125 @@ pub struct Tally {
     pub errors: Count,
 }
 
+/// Counts for Python files outside tests and scripts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PythonTally {
+    /// `left` is an absolute package import. `right` is `from .x import`.
+    pub imports: Count,
+    /// `left` raises a project exception class. `right` raises bare `Exception`.
+    pub errors: Count,
+    /// `left` is a `logging` call. `right` is `print()`.
+    pub logging: Count,
+    /// `left` is a function with an early `return` or `raise`. `right` is one with `if/else`.
+    pub control_flow: Count,
+    /// `left` is a fully annotated signature. `right` is an unannotated one.
+    pub annotations: Count,
+    /// `left` is a project-specific decorator. `right` is a framework decorator.
+    pub decorators: Count,
+}
+
+/// Counts for Rust library code outside tests and `main`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RustTally {
+    /// `left` is a `crate::` path. `right` is a `super::` path.
+    pub imports: Count,
+    /// `left` is `?` propagation. `right` is `.unwrap()` or `.expect()`.
+    pub errors: Count,
+    /// `left` is a `tracing` or `log` macro. `right` is `println!` or `eprintln!`.
+    pub logging: Count,
+    /// `left` is a function with an early `return` or `let … else`. `right` is one with `if/else`.
+    pub control_flow: Count,
+}
+
+/// Counts for Go files outside `_test.go`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GoTally {
+    /// `left` wraps with `fmt.Errorf("…: %w", err)`. `right` returns `err` bare.
+    pub errors: Count,
+    /// `left` is `log/slog`, zap or zerolog. `right` is `fmt.Println` or `log.Print*`.
+    pub logging: Count,
+    /// `left` is a function with an early `return`. `right` is one with `if/else`.
+    pub control_flow: Count,
+}
+
+/// Raw counts for every dimension the cold-start scanner measures, kept apart
+/// per [`Family`]: a guard clause in Python says nothing about TypeScript.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub script: ScriptTally,
+    pub python: PythonTally,
+    pub rust: RustTally,
+    pub go: GoTally,
+}
+
+impl ScriptTally {
+    fn counts(&mut self) -> [&mut Count; 7] {
+        [
+            &mut self.import_paths,
+            &mut self.exports,
+            &mut self.type_constructs,
+            &mut self.function_syntax,
+            &mut self.control_flow,
+            &mut self.decorators,
+            &mut self.errors,
+        ]
+    }
+}
+
+impl PythonTally {
+    fn counts(&mut self) -> [&mut Count; 6] {
+        [
+            &mut self.imports,
+            &mut self.errors,
+            &mut self.logging,
+            &mut self.control_flow,
+            &mut self.annotations,
+            &mut self.decorators,
+        ]
+    }
+}
+
+impl RustTally {
+    fn counts(&mut self) -> [&mut Count; 4] {
+        [
+            &mut self.imports,
+            &mut self.errors,
+            &mut self.logging,
+            &mut self.control_flow,
+        ]
+    }
+}
+
+impl GoTally {
+    fn counts(&mut self) -> [&mut Count; 3] {
+        [&mut self.errors, &mut self.logging, &mut self.control_flow]
+    }
+}
+
+impl Tally {
+    /// Every count in a fixed order: the cache encoding, and folding.
+    fn counts(&mut self) -> Vec<&mut Count> {
+        let mut all: Vec<&mut Count> = Vec::new();
+        all.extend(self.script.counts());
+        all.extend(self.python.counts());
+        all.extend(self.rust.counts());
+        all.extend(self.go.counts());
+        all
+    }
+}
+
 impl AddAssign for Tally {
-    fn add_assign(&mut self, rhs: Self) {
-        self.import_paths += rhs.import_paths;
-        self.exports += rhs.exports;
-        self.type_constructs += rhs.type_constructs;
-        self.function_syntax += rhs.function_syntax;
-        self.control_flow += rhs.control_flow;
-        self.decorators += rhs.decorators;
-        self.errors += rhs.errors;
+    fn add_assign(&mut self, mut rhs: Self) {
+        for (total, part) in self.counts().into_iter().zip(rhs.counts()) {
+            *total += *part;
+        }
     }
 }
 
 /// One measured choice, labelled for display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Dimension {
+    pub family: Family,
     pub name: &'static str,
     /// What [`Count::left`] counts.
     pub left: &'static str,
@@ -95,86 +203,126 @@ pub struct Dimension {
 impl Tally {
     /// Every dimension with human-readable labels, in a stable order, so
     /// `taste status` can show *why* a rule was or was not inferred.
-    pub fn dimensions(&self) -> [Dimension; 7] {
-        let dimension = |name, left, right, count| Dimension {
+    pub fn dimensions(&self) -> Vec<Dimension> {
+        let dimension = |family, name, left, right, count| Dimension {
+            family,
             name,
             left,
             right,
             count,
         };
-        [
+        let (s, py, rs, go) = (&self.script, &self.python, &self.rust, &self.go);
+        use Family::{Go, Python, Rust, Script};
+        vec![
             dimension(
+                Script,
                 "imports",
                 "path aliases",
                 "deep relative",
-                self.import_paths,
+                s.import_paths,
             ),
-            dimension("exports", "named", "default", self.exports),
+            dimension(Script, "exports", "named", "default", s.exports),
             dimension(
+                Script,
                 "object types",
                 "interface",
                 "type alias",
-                self.type_constructs,
+                s.type_constructs,
             ),
             dimension(
+                Script,
                 "functions",
                 "declarations",
                 "const arrows",
-                self.function_syntax,
+                s.function_syntax,
             ),
             dimension(
+                Script,
                 "control flow",
                 "guard clauses",
                 "if/else",
-                self.control_flow,
+                s.control_flow,
             ),
-            dimension("decorators", "project", "framework", self.decorators),
-            dimension("errors", "custom", "bare Error", self.errors),
+            dimension(Script, "decorators", "project", "framework", s.decorators),
+            dimension(Script, "errors", "custom", "bare Error", s.errors),
+            dimension(Python, "imports", "absolute", "relative", py.imports),
+            dimension(Python, "errors", "custom", "bare Exception", py.errors),
+            dimension(Python, "logging", "logger", "print()", py.logging),
+            dimension(
+                Python,
+                "control flow",
+                "guard clauses",
+                "if/else",
+                py.control_flow,
+            ),
+            dimension(
+                Python,
+                "annotations",
+                "annotated",
+                "unannotated",
+                py.annotations,
+            ),
+            dimension(Python, "decorators", "project", "framework", py.decorators),
+            dimension(Rust, "imports", "crate::", "super::", rs.imports),
+            dimension(Rust, "errors", "`?`", "unwrap/expect", rs.errors),
+            dimension(Rust, "logging", "tracing/log", "println!", rs.logging),
+            dimension(
+                Rust,
+                "control flow",
+                "guard clauses",
+                "if/else",
+                rs.control_flow,
+            ),
+            dimension(Go, "errors", "wrapped", "bare err", go.errors),
+            dimension(Go, "logging", "structured", "fmt.Println", go.logging),
+            dimension(
+                Go,
+                "control flow",
+                "guard clauses",
+                "if/else",
+                go.control_flow,
+            ),
         ]
     }
 }
 
-/// Persist a per-file tally in `file_snapshots.ast_signature`.
-///
-/// Incremental rescans skip the parse but still have to fold the file into the
-/// repository ratio. The signature is that file's counts, not a second copy of
-/// the source.
 /// Version tag on every cached tally. Bump it whenever an analyzer counts
 /// differently, so the next scan recounts files whose snapshot was written by
 /// an older build instead of reusing their stale tallies.
 ///
 /// - `tally2`: re-exports and `export type { … }` stopped counting as named
 ///   exports.
-const TALLY_FORMAT: &str = "tally2";
+/// - `tally3`: counts split per language family, with Python, Rust and Go
+///   dimensions. Bumped once for all of phase 8: those languages are skipped
+///   before they are read until their analyzers land, so no snapshot holds a
+///   zero tally for them that a later step would wrongly reuse.
+const TALLY_FORMAT: &str = "tally3";
 
+/// Persist a per-file tally in `file_snapshots.ast_signature`.
+///
+/// Incremental rescans skip the parse but still have to fold the file into the
+/// repository ratio. The signature is that file's counts, not a second copy of
+/// the source.
 pub(crate) fn encode_tally(tally: &Tally) -> String {
-    fn part(count: Count) -> String {
-        format!("{},{},{}", count.left, count.right, count.files)
+    let mut tally = *tally;
+    let mut out = String::from(TALLY_FORMAT);
+    for count in tally.counts() {
+        out.push_str(&format!(";{},{},{}", count.left, count.right, count.files));
     }
-    format!(
-        "{TALLY_FORMAT};{};{};{};{};{};{};{}",
-        part(tally.import_paths),
-        part(tally.exports),
-        part(tally.type_constructs),
-        part(tally.function_syntax),
-        part(tally.control_flow),
-        part(tally.decorators),
-        part(tally.errors),
-    )
+    out
 }
 
 pub(crate) fn decode_tally(signature: &str) -> Option<Tally> {
     let rest = signature.strip_prefix(TALLY_FORMAT)?.strip_prefix(';')?;
     let mut parts = rest.split(';');
-    Some(Tally {
-        import_paths: decode_count(parts.next()?)?,
-        exports: decode_count(parts.next()?)?,
-        type_constructs: decode_count(parts.next()?)?,
-        function_syntax: decode_count(parts.next()?)?,
-        control_flow: decode_count(parts.next()?)?,
-        decorators: decode_count(parts.next()?)?,
-        errors: decode_count(parts.next()?)?,
-    })
+    let mut tally = Tally::default();
+    for count in tally.counts() {
+        *count = decode_count(parts.next()?)?;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(tally)
 }
 
 fn decode_count(raw: &str) -> Option<Count> {
@@ -190,26 +338,38 @@ fn decode_count(raw: &str) -> Option<Count> {
 ///
 /// An unparseable buffer contributes nothing. Returning an empty tally, rather
 /// than failing the scan, keeps one broken file from discarding the rest.
-pub fn analyze_source(lang: SupportedLanguage, source: &str) -> Tally {
+///
+/// `path` is the file's path relative to the project root. Python reads its
+/// own package's name from it.
+pub fn analyze_source(lang: SupportedLanguage, path: &Path, source: &str) -> Tally {
+    if !lang.has_analyzers() {
+        return Tally::default();
+    }
     let Some(tree) = super::parse(lang, source) else {
         return Tally::default();
     };
-    if !lang.is_script() {
-        return Tally::default();
-    }
-    tally_tree(lang, &tree, source)
+    tally_tree(lang, path, &tree, source)
 }
 
-pub(crate) fn tally_tree(lang: SupportedLanguage, tree: &Tree, source: &str) -> Tally {
-    Tally {
-        import_paths: imports::import_paths(lang, tree, source),
-        exports: imports::exports(lang, tree, source),
-        type_constructs: types::type_constructs(lang, tree, source),
-        function_syntax: functions::function_syntax(lang, tree, source),
-        control_flow: functions::control_flow(lang, tree, source),
-        decorators: arch::decorators(lang, tree, source),
-        errors: arch::errors(lang, tree, source),
+pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, source: &str) -> Tally {
+    let mut tally = Tally::default();
+    match lang.family() {
+        Family::Script => {
+            tally.script = ScriptTally {
+                import_paths: imports::import_paths(lang, tree, source),
+                exports: imports::exports(lang, tree, source),
+                type_constructs: types::type_constructs(lang, tree, source),
+                function_syntax: functions::function_syntax(lang, tree, source),
+                control_flow: functions::control_flow(lang, tree, source),
+                decorators: arch::decorators(lang, tree, source),
+                errors: arch::errors(lang, tree, source),
+            }
+        }
+        Family::Python => tally.python = python::tally(path, tree, source),
+        Family::Rust => tally.rust = rust::tally(path, tree, source),
+        Family::Go => tally.go = go::tally(path, tree, source),
     }
+    tally
 }
 
 pub(crate) fn run<'a>(
@@ -228,8 +388,8 @@ pub(crate) fn run<'a>(
 mod tests {
     use super::*;
 
-    fn tally(lang: SupportedLanguage, source: &str) -> Tally {
-        analyze_source(lang, source)
+    fn tally(lang: SupportedLanguage, source: &str) -> ScriptTally {
+        analyze_source(lang, Path::new("src/app.ts"), source).script
     }
 
     #[test]
@@ -461,7 +621,37 @@ export default loadUser;
 
     #[test]
     fn a_rust_file_contributes_no_script_counts() {
-        let got = tally(SupportedLanguage::Rust, "fn main() {}\n");
-        assert_eq!(got, Tally::default());
+        let got = analyze_source(
+            SupportedLanguage::Rust,
+            Path::new("src/main.rs"),
+            "fn main() {}\n",
+        );
+        assert_eq!(got.script, ScriptTally::default());
+    }
+
+    #[test]
+    fn every_familys_counts_survive_the_snapshot_encoding() {
+        let mut tally = Tally::default();
+        for (n, count) in tally.counts().into_iter().enumerate() {
+            let n = n as u32;
+            *count = Count {
+                left: n,
+                right: n + 100,
+                files: n + 200,
+            };
+        }
+        assert_eq!(decode_tally(&encode_tally(&tally)), Some(tally));
+        assert_eq!(tally.dimensions().len(), tally.counts().len());
+    }
+
+    #[test]
+    fn folding_keeps_each_familys_counts_apart() {
+        let mut total = Tally::default();
+        total.script.control_flow = Count::from_sides(3, 1);
+        let mut python = Tally::default();
+        python.python.control_flow = Count::from_sides(0, 5);
+        total += python;
+        assert_eq!(total.script.control_flow, Count::from_sides(3, 1));
+        assert_eq!(total.python.control_flow, Count::from_sides(0, 5));
     }
 }

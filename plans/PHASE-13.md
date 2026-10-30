@@ -69,7 +69,9 @@ architecture that exists.
       post.
 - [ ] Pages for what phases 8–12 add: Python, Rust and Go; the new
       TypeScript detectors; history mining; personal rules; dashboard
-      editing.
+      editing. For the three languages, document every dimension, detector
+      and exclusion recorded in [PHASE-8.md](PHASE-8.md) steps 2–4, and the
+      256 KiB and versioned-file-name limits the scanner gained there.
 - [ ] WEBSITE.md step 7 up to, not including, the launch itself: link
       checker in CI and the Pages workflow. Launch is part of phase 14.
 

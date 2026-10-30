@@ -13,6 +13,44 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 use tree_sitter::{Language, Parser, Tree};
 
+/// Languages that share one set of conventions, and therefore one set of
+/// counts and one rule scope. TypeScript, TSX and JavaScript are one family:
+/// the same import, export and function-syntax choices apply to all three.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Family {
+    Script,
+    Python,
+    Rust,
+    Go,
+}
+
+impl Family {
+    pub const ALL: [Family; 4] = [Family::Script, Family::Python, Family::Rust, Family::Go];
+
+    /// Label shown beside this family's scan counts.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Script => "ts/js",
+            Self::Python => "python",
+            Self::Rust => "rust",
+            Self::Go => "go",
+        }
+    }
+
+    /// Glob every file of this family matches. Scan rules use it as their
+    /// scope, which keeps one language's rule out of another's files and,
+    /// because the scope is part of a rule's identifier, gives the same
+    /// dimension in two languages two identifiers.
+    pub const fn scope(self) -> &'static str {
+        match self {
+            Self::Script => "**/*.{ts,tsx,js,jsx,mjs,cjs}",
+            Self::Python => "**/*.py",
+            Self::Rust => "**/*.rs",
+            Self::Go => "**/*.go",
+        }
+    }
+}
+
 /// Languages the scanner and the diff engine know how to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SupportedLanguage {
@@ -66,6 +104,16 @@ impl SupportedLanguage {
         }
     }
 
+    /// The family whose conventions and counts this language shares.
+    pub fn family(self) -> Family {
+        match self {
+            Self::TypeScript | Self::Tsx | Self::JavaScript => Family::Script,
+            Self::Python => Family::Python,
+            Self::Rust => Family::Rust,
+            Self::Go => Family::Go,
+        }
+    }
+
     /// TypeScript or TSX. JavaScript is deliberately excluded.
     pub fn is_typescript(self) -> bool {
         matches!(self, Self::TypeScript | Self::Tsx)
@@ -78,9 +126,12 @@ impl SupportedLanguage {
 
     /// Whether OpenTaste learns anything from this language yet. The scanner
     /// and the post-commit hook skip other files before reading them. This is
-    /// the one switch to flip when a language gains analyzers and detectors.
+    /// the one switch to flip when a language gains analyzers and detectors;
+    /// the match is exhaustive so a new family has to decide.
     pub fn has_analyzers(self) -> bool {
-        self.is_script()
+        match self.family() {
+            Family::Script | Family::Python | Family::Rust | Family::Go => true,
+        }
     }
 
     /// Grammar for this language.
@@ -205,6 +256,34 @@ mod tests {
                 lang.name(),
                 tree.root_node().to_sexp()
             );
+        }
+    }
+
+    #[test]
+    fn every_family_scope_matches_its_own_files_and_no_other_familys() {
+        let files = [
+            "src/a.ts",
+            "src/b.tsx",
+            "src/c.mjs",
+            "app/d.py",
+            "src/e.rs",
+            "pkg/f.go",
+        ];
+        for family in Family::ALL {
+            let glob = globset::GlobBuilder::new(family.scope())
+                .literal_separator(true)
+                .build()
+                .unwrap()
+                .compile_matcher();
+            for file in files {
+                let lang = SupportedLanguage::from_path(Path::new(file)).unwrap();
+                assert_eq!(
+                    glob.is_match(file),
+                    lang.family() == family,
+                    "{} against {file}",
+                    family.scope()
+                );
+            }
         }
     }
 

@@ -265,10 +265,11 @@ impl CandidateRule {
         instruction: impl Into<String>,
     ) -> Self {
         let instruction = instruction.into();
+        let scope = scope.into();
         CandidateRule {
-            id: rule_id(category, &instruction),
+            id: rule_id(category, &scope, &instruction),
             category,
-            scope: scope.into(),
+            scope,
             confidence: crate::scorer::confidence::initial_confidence(source),
             occurrences: 1,
             contradictions: 0,
@@ -440,12 +441,15 @@ pub fn significant_tokens(instruction: &str) -> Vec<String> {
 /// Number of instruction tokens used in the readable part of an identifier.
 const ID_SLUG_TOKENS: usize = 5;
 
-/// Derive a stable identifier from a rule's category and instruction.
+/// Derive a stable identifier from a rule's category, scope and instruction.
 ///
 /// The readable slug keeps identifiers reviewable in git, while the hash suffix
 /// guarantees two genuinely different rules in one category can never collapse
-/// into each other just because they open with the same words.
-pub fn rule_id(category: RuleCategory, instruction: &str) -> String {
+/// into each other just because they open with the same words. The scope is in
+/// the hash because the same preference learned in two monorepo packages, or in
+/// two languages, is two rules: one package's corrections must not count
+/// towards another's.
+pub fn rule_id(category: RuleCategory, scope: &str, instruction: &str) -> String {
     let tokens = significant_tokens(instruction);
     let slug = tokens
         .iter()
@@ -456,6 +460,8 @@ pub fn rule_id(category: RuleCategory, instruction: &str) -> String {
 
     let mut hasher = Sha256::new();
     hasher.update(category.slug().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.trim().as_bytes());
     hasher.update(b"\0");
     hasher.update(normalize_instruction(instruction).as_bytes());
     let digest = hasher.finalize();
@@ -476,6 +482,8 @@ pub fn rule_id(category: RuleCategory, instruction: &str) -> String {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    const SCOPE: &str = "src/**/*.ts";
 
     fn sample_rule() -> TasteRule {
         TasteRule {
@@ -555,26 +563,52 @@ mod tests {
     #[test]
     fn rule_ids_are_stable_and_instruction_sensitive() {
         let instruction = "Use custom @AutoEntity() and @AutoIndex() decorators instead of raw TypeORM @Entity() and @Index().";
-        let id = rule_id(RuleCategory::Architecture, instruction);
+        let id = rule_id(RuleCategory::Architecture, SCOPE, instruction);
 
-        assert_eq!(id, rule_id(RuleCategory::Architecture, instruction));
+        assert_eq!(id, rule_id(RuleCategory::Architecture, SCOPE, instruction));
         assert!(id.starts_with("arch-"), "{id}");
         assert!(id.contains("custom"), "{id}");
         assert!(id.contains("autoentity"), "{id}");
 
         // Same words, different category, and same category, different words.
-        assert_ne!(id, rule_id(RuleCategory::Types, instruction));
+        assert_ne!(id, rule_id(RuleCategory::Types, SCOPE, instruction));
         assert_ne!(
             id,
-            rule_id(RuleCategory::Architecture, "Use custom loggers.")
+            rule_id(RuleCategory::Architecture, SCOPE, "Use custom loggers.")
+        );
+    }
+
+    #[test]
+    fn the_same_preference_in_two_packages_gets_two_ids() {
+        let instruction = "Prefer custom error classes over throwing bare `Error`.";
+        let nextjs = rule_id(
+            RuleCategory::ErrorHandling,
+            "apps/nextjs/**/*.tsx",
+            instruction,
+        );
+        let start = rule_id(
+            RuleCategory::ErrorHandling,
+            "apps/tanstack-start/**/*.tsx",
+            instruction,
+        );
+        assert_ne!(nextjs, start);
+        // Only the hash differs, so both stay readable in a diff.
+        assert_eq!(
+            nextjs.rsplit_once('-').unwrap().0,
+            start.rsplit_once('-').unwrap().0
         );
     }
 
     #[test]
     fn rule_ids_ignore_casing_whitespace_and_trailing_punctuation() {
-        let a = rule_id(RuleCategory::Imports, "Prefer alias imports over relative.");
+        let a = rule_id(
+            RuleCategory::Imports,
+            SCOPE,
+            "Prefer alias imports over relative.",
+        );
         let b = rule_id(
             RuleCategory::Imports,
+            SCOPE,
             "  prefer  ALIAS imports over relative  ",
         );
         assert_eq!(a, b);
@@ -582,7 +616,7 @@ mod tests {
 
     #[test]
     fn rule_ids_stay_readable_when_every_word_is_a_stopword() {
-        let id = rule_id(RuleCategory::Naming, "Use the of to and");
+        let id = rule_id(RuleCategory::Naming, SCOPE, "Use the of to and");
         assert!(id.starts_with("naming-"), "{id}");
         assert_eq!(id.matches('-').count(), 1, "{id}");
     }

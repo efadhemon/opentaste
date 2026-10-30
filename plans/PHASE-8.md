@@ -1,6 +1,6 @@
 # Phase 8: Python, Rust and Go
 
-**Status:** pending
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -40,21 +40,36 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 ## Step 1: Shared groundwork
 
-- [ ] Rule identity includes the language family for scan rules. Today a
+- [x] Rule identity includes the language family for scan rules. Today a
       guard-clause rule from TypeScript and one from Python would share an
       instruction and therefore an id; give each language its own
       instruction text and scope (`**/*.py`, `**/*.rs`, `**/*.go`).
-- [ ] File roles for scopes per language: `test_*.py` / `*_test.py`,
+      *Landed as part of phase 7's manual gate:* `rule_id` now hashes the
+      scope, so the same instruction under `**/*.py` and under the script
+      scope are two ids whatever the wording. Each language still gets its own
+      instruction text where the idiom differs (`raise`, `let … else`), and
+      always for symmetric choices, because the opposite-rule check matches on
+      instruction text across scopes. `Family::scope()` owns the four globs.
+- [x] File roles for scopes per language: `test_*.py` / `*_test.py`,
       `*_test.go`, Rust `tests/` and `#[cfg(test)]` modules, so a scope like
       `**/*_test.go` is derived the way `*.service.ts` is today.
-- [ ] Test-code exclusion: `.unwrap()` in tests and `print()` in scripts are
+      (`ast/roles.rs`; a crate's `tests/` narrows to `<crate>/tests/**/*.rs`.
+      `#[cfg(test)]` modules are inside a file, so step 3's analyzers and
+      detectors skip them rather than a scope.)
+- [x] Test-code exclusion: `.unwrap()` in tests and `print()` in scripts are
       not taste. Analyzers skip test files and test modules; Python skips
       `if __name__ == "__main__":` blocks and files under `scripts/`.
-- [ ] Contradiction skip-kinds and the scrubber's string-node kinds cover the
+      (Path-based exclusion is in `roles::is_test_or_script` and the scan
+      applies it before reading; TypeScript is unchanged. The in-file parts,
+      `__main__` blocks and `#[cfg(test)]`, belong to steps 2 and 3.)
+- [x] Contradiction skip-kinds and the scrubber's string-node kinds cover the
       three grammars (Python `string`, Rust `string_literal` / `raw_string_literal`,
-      Go `interpreted_string_literal` / `raw_string_literal`).
-- [ ] Bump `TALLY_FORMAT` once for the whole phase.
-- [ ] **Structural-similarity deduplication (M12).** SPEC.md §2 promises
+      Go `interpreted_string_literal` / `raw_string_literal`). Go's content
+      nodes (`interpreted_string_literal_content`, `raw_string_literal_content`)
+      were the missing piece.
+- [x] Bump `TALLY_FORMAT` once for the whole phase (`tally3`: counts split per
+      language family, all phase 8 dimensions present).
+- [x] **Structural-similarity deduplication (M12).** SPEC.md §2 promises
       "token-jaccard & structural similarity" deduplication; only the first
       exists. Two observations are also duplicates when their category and
       scope match and their avoid and prefer snippets have the same syntax
@@ -62,68 +77,171 @@ scan analyzer only: adding annotations is not a swap of one style for another.
       wording. More languages mean more phrasings of the same preference, so
       this lands before them. Tests: same snippets in different words merge;
       same words with different snippets do not; snippets in two languages
-      never merge.
-- [ ] Tests: rule ids differ per language for the same dimension; role
+      never merge. ("Identifiers normalised" means the ones carried through
+      both halves of the edit; the identifiers the edit changed stay verbatim,
+      or `@Entity → @AutoEntity` would merge with `@Index → @AutoIndex`.)
+- [x] Tests: rule ids differ per language for the same dimension; role
       scopes for each language; test files are excluded.
 
 ## Step 2: Python
 
-- [ ] Analyzers for the five Python dimensions in the table, as
-      `ast/analyzers/python.rs`.
-- [ ] Detectors: relative ↔ absolute import rewrite; `Exception` → project
+- [x] Analyzers for the five Python dimensions in the table, as
+      `ast/analyzers/python.rs`. (Six, with decorators.) "The project's own
+      package" is read from the file's path: an absolute import is first-party
+      when its top module is a directory the file lives in. Third-party and
+      standard-library imports count toward neither side. Only imports are
+      symmetric; the other five promote their left side only.
+      Not counted, by design: `ValueError` and other built-ins, names of
+      unknown origin, language decorators (`@property`, standard-library ones
+      such as `@dataclass`), half-annotated signatures, `elif` without `else`,
+      `for`/`try … else`, `rich.print`, and every `print()` in a command-line
+      file (`__main__.py`, `cli.py`, `manage.py`, `cli/`, `commands/`,
+      `management/`, or a file importing argparse, click, typer, fire, docopt
+      or optparse).
+- [x] Detectors: relative ↔ absolute import rewrite; `Exception` → project
       exception; `print` → logger; nested `if`/`else` → guard clause.
-- [ ] Fixtures under `tests/fixtures/python/`, a positive and a negative per
+      (`diff/python.rs`.)
+- [x] Fixtures under `tests/fixtures/python/`, a positive and a negative per
       detector, in the style of the existing TypeScript fixtures.
-- [ ] Turn Python on in `SupportedLanguage::has_analyzers`.
-- [ ] **Precision gate:** scan three real open-source Python projects of
+- [x] Turn Python on in `SupportedLanguage::has_analyzers` (and `taste
+      watch`, which was still checking `is_script`).
+- [x] **Precision gate:** scan three real open-source Python projects of
       different kinds (a web service, a library, a CLI). Every rule emitted is
       listed in this file with a yes/no from a human; any "no" is a bug to fix
       before the step is ticked.
+      Run on 2026-10-30 with `taste init` on shallow clones. The maintainer
+      answered yes to all eight on 2026-10-30.
+
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
+      | --- | --- | --- | --- | --- |
+      | fastapi/full-stack-fastapi-template (web service) | Python: absolute imports of the own package | 45 · 0, 19 files | yes | `backend/app` imports only `from app.…` |
+      | ″ | TS: named exports | 275 · 23, 98 files | yes | existing TS analyzer, frontend |
+      | ″ | TS: path aliases | 203 · 2, 60 files | yes | existing TS analyzer, frontend |
+      | encode/httpx (library) | Python: relative imports | 1 · 87, 21 files | yes | `from ._models import …` throughout |
+      | ″ | Python: annotate signatures | 445 · 0, 21 files | yes | fully typed, ships `py.typed` |
+      | pypa/pipx (CLI) | Python: own exception classes | 204 · 0, 28 files | yes | 193 × `raise PipxError`, its subclasses; no bare `Exception` |
+      | ″ | Python: absolute imports of the own package | 413 · 0, 46 files | yes | `from pipx.… import` throughout |
+      | ″ | Python: annotate signatures | 742 · 3, 59 files | yes | typed codebase |
+
+      Not promoted, correctly: the template's annotations (51 · 13, 79.7%),
+      pipx's logging (66 · 17, 79.5%: a CLI that prints its output), and every
+      dimension under the 10-file floor.
 
 ## Step 3: Rust
 
-- [ ] Analyzers for the four Rust dimensions, as `ast/analyzers/rust.rs`.
+- [x] Analyzers for the four Rust dimensions, as `ast/analyzers/rust.rs`.
       `.unwrap()` on a `Mutex` lock or in `main` of a binary is common and
       defensible; count only library code outside `main` and tests.
-- [ ] Detectors: `super::` ↔ `crate::` rewrite; `.unwrap()` → `?`;
+      Test items (`#[test]`, `#[cfg(test)]`, `#[…::test]`) are skipped for
+      every dimension; `fn main`, `main.rs` and `src/bin/` are skipped for
+      errors and logging. Also not counted: `.lock()`/`.read()`/`.write()`
+      unwraps, unwraps inside statics or `get_or_init`/`Lazy` closures,
+      `if … else` whose branches produce a value (Rust's conditional
+      expression), and `info!`-style macros not qualified with or imported
+      from `tracing`/`log`. Only `use` paths are symmetric.
+- [x] Detectors: `super::` ↔ `crate::` rewrite; `.unwrap()` → `?`;
       `println!` → `tracing`/`log`; nested `if`/`else` → guard clause or
-      `let … else`.
-- [ ] Fixtures under `tests/fixtures/rust/`.
-- [ ] Turn Rust on in `has_analyzers`.
-- [ ] **Precision gate:** three real Rust projects (a library, a CLI, a web
+      `let … else`. (`diff/rust.rs`, same exclusions as the scan.)
+- [x] Fixtures under `tests/fixtures/rust/`.
+- [x] Turn Rust on in `has_analyzers`.
+- [x] **Precision gate:** three real Rust projects (a library, a CLI, a web
       service). OpenTaste itself may be one of them.
+      Run on 2026-10-30 on shallow clones. The maintainer answered yes to all
+      ten on 2026-10-30.
+
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
+      | --- | --- | --- | --- | --- |
+      | BurntSushi/ripgrep (CLI) | Rust: `?` over unwrap/expect | 476 · 79, 45 files | yes | library crates propagate; binary files not counted |
+      | ″ | Rust: `crate::` over `super::` | 59 · 2, 48 files | yes | |
+      | ″ | Rust: `tracing`/`log` over `println!` | 77 · 2, 24 files | yes | 54 × `log::debug!`, 23 × `log::trace!`; the two `println!` are in a doc example and test util |
+      | dani-garcia/vaultwarden (web service) | Rust: `?` over unwrap/expect | 780 · 179, 53 files | yes | |
+      | ″ | TS/JS: `function` declarations | 83 · 7, 13 files | yes, after a fix | see below |
+      | OpenTaste (library + CLI) | Rust: `?` over unwrap/expect | 322 · 2, 36 files | yes | `taste-core` returns typed errors |
+      | ″ | Rust: `crate::` over `super::` | 95 · 17, 43 files | yes | |
+      | ″ | Rust: guard clauses and `let … else` | 102 · 19, 35 files | yes | |
+      | ″ | TS: named exports | 49 · 0, 19 files | yes | |
+      | ″ | TS: guard clauses | 20 · 4, 11 files | yes | |
+
+      serde-rs/json (library) emitted nothing, correctly: `crate::` and
+      `super::` are an even split (45 · 44) and it propagates with its own
+      `tri!` macro rather than `?`.
+
+      **Wrong rule found and fixed.** The first run gave vaultwarden "prefer
+      `function` declarations" at 97% from 355 · 12, almost all of it from
+      vendored libraries in `src/static/scripts/` (`datatables.js`, 13,000
+      lines; `jdenticon-3.3.0.js`). The scanner now skips files over 256 KiB
+      (was 1 MiB) and files named after a release (`name-1.2.3.js`). Test:
+      `vendored_and_oversized_scripts_do_not_count`. After the fix the rule
+      rests on the project's own `admin*.js`, which use `function`
+      declarations throughout.
 
 ## Step 4: Go
 
-- [ ] Analyzers for the three Go dimensions, as `ast/analyzers/go.rs`.
+- [x] Analyzers for the three Go dimensions, as `ast/analyzers/go.rs`.
       `return err` directly after a call that already wraps is not "bare";
       count only returns of an `err` from another package's call.
-- [ ] Detectors: `return err` → `fmt.Errorf("…: %w", err)`; `fmt.Println` →
-      `slog`; nested `if`/`else` → guard clause.
-- [ ] Fixtures under `tests/fixtures/go/`.
-- [ ] Turn Go on in `has_analyzers`.
-- [ ] **Precision gate:** three real Go projects.
+      (The error must come from the `if`'s initializer or the statement just
+      before it, and that call must be `pkg.Func(…)` on an imported package.
+      Wrapping is `fmt.Errorf` with `%w`.) Logging does not count in
+      `package main`, under `cmd/`, in `func main`, or in files importing
+      `flag`, cobra, urfave/cli, kong or ff; a logger is `slog`, zap, zerolog,
+      logrus, or a value or call named as one (`s.logger`, `app.Logger()`).
+      An `if` whose condition or initializer mentions `err` or an `…Err`
+      variable is the error idiom and is never counted as a guard.
+- [x] Detectors: `return err` → `fmt.Errorf("…: %w", err)`; `fmt.Println` →
+      `slog`; nested `if`/`else` → guard clause. (`diff/go.rs`. The logger
+      detector pairs on the message, slog's first argument.)
+- [x] Fixtures under `tests/fixtures/go/`.
+- [x] Turn Go on in `has_analyzers`. Every supported language now has
+      analyzers; the function is an exhaustive match so a new family decides.
+- [x] **Precision gate:** three real Go projects.
+      Run on 2026-10-30 on shallow clones of go-chi/chi (library),
+      junegunn/fzf (CLI), pocketbase/pocketbase (web service) and cli/cli
+      (CLI). The maintainer answered yes to all three on 2026-10-30.
+
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
+      | --- | --- | --- | --- | --- |
+      | pocketbase (web service) | Go: structured logger over prints | 107 · 14, 45 files | yes | `app.Logger()` is a `*slog.Logger`; the 14 prints are `log.Println` warnings in `core/` and `tools/`; its cobra command plugins are not counted |
+      | ″ | TS/JS: named exports | 117 · 1, 111 files | yes | hand-written `ui/src`; `ui/dist` is skipped |
+      | ″ | TS/JS: `function` declarations | 626 · 31, 159 files | yes | `ui/src` modules declare functions throughout |
+
+      No Go rule from chi, fzf or cli/cli, correctly: their ratios are mixed.
+      cli/cli wraps 634 and returns 754 bare; guard ratios run 67–80%.
+
+      **Two counting bugs found and fixed while checking.** `if err != nil
+      && !errors.Is(err, X) { return err }` and `if errors.Is(err, X) {
+      return … }` were counted as guards; any `if` mentioning an error
+      variable is now the idiom (this took pocketbase's guards from a
+      borderline 80% to 79%, so that rule is no longer emitted). And
+      `app.Logger().Error(…)` was not recognised as logging, so pocketbase
+      showed 0 structured calls; call receivers named as loggers now count,
+      and files using a CLI package no longer count their prints.
 
 ## Step 5: The full test set
 
-- [ ] Every analyzer: a unanimous file, a mixed file, and a file that must
+- [x] Every analyzer: a unanimous file, a mixed file, and a file that must
       count nothing.
-- [ ] Every detector: one positive and one negative fixture.
-- [ ] Test code, scripts and `main` excluded where the step says so.
-- [ ] A mixed-language repository (TS + Python + Go) produces separate rules
+- [x] Every detector: one positive and one negative fixture.
+- [x] Test code, scripts and `main` excluded where the step says so.
+- [x] A mixed-language repository (TS + Python + Go) produces separate rules
       per language and none that crosses languages.
-- [ ] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
+      (`a_typescript_python_and_go_repository_keeps_every_languages_rules_apart`.)
+- [x] Commit learning (`learn --from-git-head`) and `learn-delta` both learn
       from a `.py`, `.rs` and `.go` correction.
 
 ---
 
 ## Definition of done
 
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-      warnings` and `cargo test --workspace` clean.
-- [ ] The three precision gates recorded in this file, every emitted rule
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean (415 tests).
+- [x] The three precision gates recorded in this file, every emitted rule
       agreed with.
-- [ ] The website's detector reference and language lists updated (phase 13
-      checks this).
-- [ ] V1-AUDIT M2 and M12 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] The website's detector reference and language lists updated (phase 13
+      checks this). *Handed to phase 13 step 5:* the site lives on the
+      unmerged `feat/website` branch, its detector reference is to be
+      generated from the code there, and step 5 already lists pages for
+      Python, Rust and Go. The detectors and exclusions to document are the
+      ones recorded in steps 2–4 above.
+- [x] V1-AUDIT M2 and M12 marked fixed.
+- [x] Status at the top of this file set to `completed`.

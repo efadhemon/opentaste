@@ -16,7 +16,8 @@ use globset::{Glob, GlobBuilder, GlobMatcher};
 use crate::config::Paths;
 use crate::error::{Error, Result};
 use crate::models::{
-    rule_id, CandidateRule, ProjectContext, RuleCategory, RuleSource, RulesFile, TasteRule,
+    normalize_instruction, rule_id, CandidateRule, ProjectContext, RuleCategory, RuleSource,
+    RulesFile, TasteRule,
 };
 use crate::scorer::{confidence as scoring, dedup};
 
@@ -261,7 +262,11 @@ impl RuleStore {
         }
         if let Some(conflicts_with) = find_opposite_rule(&rules, &observation) {
             return Ok(Outcome::Conflicts {
-                id: rule_id(observation.category, &observation.instruction),
+                id: rule_id(
+                    observation.category,
+                    &observation.scope,
+                    &observation.instruction,
+                ),
                 conflicts_with,
             });
         }
@@ -452,7 +457,11 @@ impl RuleStore {
 
     /// Find a candidate describing the same preference as `observation`.
     fn find_matching_candidate(&self, observation: &Observation) -> Result<Option<CandidateRule>> {
-        let expected_id = rule_id(observation.category, &observation.instruction);
+        let expected_id = rule_id(
+            observation.category,
+            &observation.scope,
+            &observation.instruction,
+        );
         if let Some(exact) = self.candidates.get_candidate(&expected_id)? {
             return Ok(Some(exact));
         }
@@ -462,29 +471,57 @@ impl RuleStore {
             .list_candidates_in(observation.category)?
             .into_iter()
             .find(|candidate| {
-                dedup::is_duplicate(
-                    candidate.category,
-                    &candidate.scope,
-                    &candidate.instruction,
-                    observation.category,
-                    &observation.scope,
-                    &observation.instruction,
+                dedup::is_same_pattern(
+                    dedup::Pattern {
+                        category: candidate.category,
+                        scope: &candidate.scope,
+                        instruction: &candidate.instruction,
+                        anti_pattern: candidate.anti_pattern.as_deref(),
+                        preferred_pattern: candidate.preferred_pattern.as_deref(),
+                    },
+                    observed_pattern(observation),
                 )
             }))
     }
 }
 
-/// Find a confirmed rule describing the same preference as `observation`.
 /// A confirmed rule that says the opposite of `observation`, for the
 /// symmetric choices the analyzers know both sides of.
+///
+/// Matched on instruction, whatever the scope: a project-wide scanned rule and
+/// a package-scoped correction saying the opposite overlap, and refusing an
+/// opposite that might not have collided costs less than installing one that
+/// does.
 fn find_opposite_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
-    let opposite = crate::ast::opposite_instruction(&observation.instruction)?;
-    let id = rule_id(observation.category, opposite);
-    rules.find(&id).map(|rule| rule.id.clone())
+    let opposite =
+        normalize_instruction(crate::ast::opposite_instruction(&observation.instruction)?);
+    rules
+        .rules
+        .iter()
+        .find(|rule| {
+            rule.category == observation.category
+                && normalize_instruction(&rule.instruction) == opposite
+        })
+        .map(|rule| rule.id.clone())
 }
 
+fn observed_pattern(observation: &Observation) -> dedup::Pattern<'_> {
+    dedup::Pattern {
+        category: observation.category,
+        scope: &observation.scope,
+        instruction: &observation.instruction,
+        anti_pattern: observation.anti_pattern.as_deref(),
+        preferred_pattern: observation.preferred_pattern.as_deref(),
+    }
+}
+
+/// Find a confirmed rule describing the same preference as `observation`.
 fn find_matching_rule(rules: &RulesFile, observation: &Observation) -> Option<String> {
-    let expected_id = rule_id(observation.category, &observation.instruction);
+    let expected_id = rule_id(
+        observation.category,
+        &observation.scope,
+        &observation.instruction,
+    );
     if rules.find(&expected_id).is_some() {
         return Some(expected_id);
     }
@@ -492,13 +529,15 @@ fn find_matching_rule(rules: &RulesFile, observation: &Observation) -> Option<St
         .rules
         .iter()
         .find(|rule| {
-            dedup::is_duplicate(
-                rule.category,
-                &rule.scope,
-                &rule.instruction,
-                observation.category,
-                &observation.scope,
-                &observation.instruction,
+            dedup::is_same_pattern(
+                dedup::Pattern {
+                    category: rule.category,
+                    scope: &rule.scope,
+                    instruction: &rule.instruction,
+                    anti_pattern: rule.anti_pattern.as_deref(),
+                    preferred_pattern: rule.preferred_pattern.as_deref(),
+                },
+                observed_pattern(observation),
             )
         })
         .map(|rule| rule.id.clone())

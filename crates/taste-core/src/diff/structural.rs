@@ -17,7 +17,7 @@ use tree_sitter::{Node, Tree};
 
 use crate::ast::{
     decorator_name, import_locals, is_custom_error, is_framework_decorator, is_package_specifier,
-    node_text, parse, unquote, ScriptQuery, SupportedLanguage,
+    node_text, parse, unquote, Family, ScriptQuery, SupportedLanguage,
 };
 use crate::config::Paths;
 use crate::models::{RuleCategory, RuleSource};
@@ -62,9 +62,12 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
     let Some(lang) = SupportedLanguage::from_path(path) else {
         return Ok(Vec::new());
     };
-    if !lang.is_script() {
-        return Ok(Vec::new());
-    }
+    let detectors = match lang.family() {
+        Family::Script => DETECTORS,
+        Family::Python => super::python::DETECTORS,
+        Family::Rust => super::rust::DETECTORS,
+        Family::Go => super::go::DETECTORS,
+    };
     let (Some(before_tree), Some(after_tree)) = (parse(lang, before), parse(lang, after)) else {
         return Ok(Vec::new());
     };
@@ -74,7 +77,7 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
-    for detector in DETECTORS {
+    for detector in detectors {
         let Some(observation) = detector.detect(&before_tree, before, &after_tree, after, path)
         else {
             continue;
@@ -87,7 +90,7 @@ pub fn analyze(before: &str, after: &str, path: &Path) -> crate::error::Result<V
     Ok(found)
 }
 
-trait Detector: Sync {
+pub(super) trait Detector: Sync {
     fn detect(
         &self,
         before_tree: &Tree,
@@ -378,7 +381,7 @@ impl Detector for ControlFlow {
     }
 }
 
-fn observation(
+pub(super) fn observation(
     category: RuleCategory,
     path: &Path,
     instruction: impl Into<String>,
@@ -537,7 +540,7 @@ pub(crate) fn scope_for_path(path: &Path) -> String {
         Some(split) => (&relative[..split], &relative[split + 1..]),
         None => ("", relative),
     };
-    let pattern = file_pattern(file);
+    let pattern = file_pattern(file, path);
     let top = dir
         .split('/')
         .find(|part| !part.is_empty() && !glob_meta(part));
@@ -552,7 +555,12 @@ pub(crate) fn scope_for_path(path: &Path) -> String {
     }
 }
 
-fn file_pattern(file: &str) -> String {
+fn file_pattern(file: &str, path: &Path) -> String {
+    if let Some(pattern) = SupportedLanguage::from_path(path)
+        .and_then(|lang| crate::ast::test_file_pattern(file, lang))
+    {
+        return pattern;
+    }
     let mut parts = file.rsplitn(3, '.');
     let ext = parts.next().unwrap_or("txt");
     let role = parts.next();
@@ -582,12 +590,28 @@ pub fn analyze_in(
     path: &Path,
 ) -> crate::error::Result<Vec<Observation>> {
     let mut observations = analyze(before, after, path)?;
-    if let Some(package) = paths.package_dir(path) {
+    if let Some(package) = scope_root(paths, path) {
         for observation in &mut observations {
             observation.scope = package_scope(&observation.scope, &package);
         }
     }
     Ok(observations)
+}
+
+/// The directory an observation from `path` is narrowed to: its monorepo
+/// package, or that package's `tests/` when `path` is one of a crate's
+/// integration tests, which are their own role as `*_test.go` files are.
+fn scope_root(paths: &Paths, path: &Path) -> Option<String> {
+    let package = paths.package_dir(path)?;
+    let in_tests = SupportedLanguage::from_path(path) == Some(SupportedLanguage::Rust)
+        && path
+            .strip_prefix(&package)
+            .is_ok_and(|inner| inner.starts_with("tests"));
+    Some(if in_tests {
+        format!("{package}/tests")
+    } else {
+        package
+    })
 }
 
 /// `scope`'s file pattern under `package`, or `scope` unchanged when the
@@ -1165,6 +1189,53 @@ mod tests {
             "**/*.entity.ts"
         );
         assert_eq!(scope_for_path(Path::new("src/main.rs")), "src/**/*.rs");
+    }
+
+    #[test]
+    fn a_test_file_is_scoped_to_test_files_of_its_language() {
+        assert_eq!(
+            scope_for_path(Path::new("pkg/users/users_test.go")),
+            "pkg/**/*_test.go"
+        );
+        assert_eq!(
+            scope_for_path(Path::new("app/tests/test_users.py")),
+            "app/**/test_*.py"
+        );
+        assert_eq!(
+            scope_for_path(Path::new("app/users_test.py")),
+            "app/**/*_test.py"
+        );
+        assert_eq!(scope_for_path(Path::new("tests/cli.rs")), "tests/**/*.rs");
+        assert_eq!(
+            scope_for_path(Path::new("pkg/users/users.go")),
+            "pkg/**/*.go"
+        );
+    }
+
+    #[test]
+    fn a_crates_integration_tests_keep_their_own_scope_inside_the_package() {
+        let dir = tempfile::tempdir().unwrap();
+        for package in ["crates/core", "web"] {
+            std::fs::create_dir_all(dir.path().join(package)).unwrap();
+        }
+        std::fs::write(dir.path().join("crates/core/Cargo.toml"), "[package]\n").unwrap();
+        std::fs::write(dir.path().join("web/package.json"), "{}\n").unwrap();
+        let paths = Paths::for_root(dir.path());
+        let root = |path: &str| scope_root(&paths, Path::new(path));
+        assert_eq!(
+            root("crates/core/tests/scan.rs").as_deref(),
+            Some("crates/core/tests")
+        );
+        assert_eq!(
+            root("crates/core/src/lib.rs").as_deref(),
+            Some("crates/core")
+        );
+        assert_eq!(
+            root("web/tests/login.ts").as_deref(),
+            Some("web"),
+            "a TypeScript tests/ directory is not a Rust test target"
+        );
+        assert_eq!(root("loose/file.rs"), None);
     }
 
     #[test]
