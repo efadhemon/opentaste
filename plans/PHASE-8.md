@@ -1,6 +1,6 @@
 # Phase 8: Python, Rust and Go
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -194,12 +194,12 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 - [x] Fixtures under `tests/fixtures/go/`.
 - [x] Turn Go on in `has_analyzers`. Every supported language now has
       analyzers; the function is an exhaustive match so a new family decides.
-- [ ] **Precision gate:** three real Go projects.
-      *Awaiting the maintainer's yes/no.* Run on 2026-10-30 on shallow clones
-      of go-chi/chi (library), junegunn/fzf (CLI), pocketbase/pocketbase (web
-      service) and cli/cli (CLI).
+- [x] **Precision gate:** three real Go projects.
+      Run on 2026-10-30 on shallow clones of go-chi/chi (library),
+      junegunn/fzf (CLI), pocketbase/pocketbase (web service) and cli/cli
+      (CLI). The maintainer answered yes to all three on 2026-10-30.
 
-      | Project (kind) | Rule | Counts | Agent | Evidence |
+      | Project (kind) | Rule | Counts | Verdict | Evidence |
       | --- | --- | --- | --- | --- |
       | pocketbase (web service) | Go: structured logger over prints | 107 · 14, 45 files | yes | `app.Logger()` is a `*slog.Logger`; the 14 prints are `log.Println` warnings in `core/` and `tools/`; its cobra command plugins are not counted |
       | ″ | TS/JS: named exports | 117 · 1, 111 files | yes | hand-written `ui/src`; `ui/dist` is skipped |
@@ -235,7 +235,7 @@ scan analyzer only: adding annotations is not a swap of one style for another.
 
 - [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` clean (415 tests).
-- [ ] The three precision gates recorded in this file, every emitted rule
+- [x] The three precision gates recorded in this file, every emitted rule
       agreed with.
 - [x] The website's detector reference and language lists updated (phase 13
       checks this). *Handed to phase 13 step 5:* the site lives on the
@@ -244,4 +244,4 @@ scan analyzer only: adding annotations is not a swap of one style for another.
       Python, Rust and Go. The detectors and exclusions to document are the
       ones recorded in steps 2–4 above.
 - [x] V1-AUDIT M2 and M12 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] Status at the top of this file set to `completed`.
