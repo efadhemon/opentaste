@@ -369,7 +369,9 @@ impl Tally {
 ///   zero tally for them that a later step would wrongly reuse.
 /// - `tally4`: validation libraries, `z.infer` types and dependency
 ///   injection, bumped once for all of phase 9.
-const TALLY_FORMAT: &str = "tally4";
+/// - `tally5`: dependency injection looks only at top-level classes (phase
+///   12's speed work), which can change a count in an unusual file.
+const TALLY_FORMAT: &str = "tally5";
 
 /// Persist a per-file tally in `file_snapshots.ast_signature`.
 ///
@@ -430,14 +432,16 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
         Family::Script => {
             let checks = validation::validation(lang, tree, source);
             let injection = di::injection(lang, tree, source);
+            let origins = arch::Origins::of(lang, tree, source);
+            let pass = Pass::new(lang, tree, source);
             tally.script = ScriptTally {
                 import_paths: imports::import_paths(lang, tree, source),
-                exports: imports::exports(lang, tree, source),
-                type_constructs: types::type_constructs(lang, tree, source),
-                function_syntax: functions::function_syntax(lang, tree, source),
-                control_flow: functions::control_flow(lang, tree, source),
-                decorators: arch::decorators(lang, tree, source),
-                errors: arch::errors(lang, tree, source),
+                exports: imports::exports(&pass),
+                type_constructs: types::type_constructs(lang, &pass),
+                function_syntax: functions::function_syntax(lang, &pass),
+                control_flow: functions::control_flow(lang, &pass),
+                decorators: arch::decorators(&pass, source, &origins),
+                errors: arch::errors(lang, &pass, source, &origins),
                 validation: checks.libraries,
                 validating: checks.validating,
                 schema_types: checks.schema_types,
@@ -453,6 +457,97 @@ pub(crate) fn tally_tree(lang: SupportedLanguage, path: &Path, tree: &Tree, sour
     tally
 }
 
+/// The whole-tree script queries, run together as one: a query costs about
+/// as much as walking every node whatever its pattern count, so six separate
+/// runs cost six walks. Each analyzer still owns its query text and reads
+/// its own matches back through [`Pass::run`], in its own capture numbering.
+const SCAN_PARTS: [&ScriptQuery; 6] = [
+    &functions::SYNTAX,
+    &functions::BODIES,
+    &types::TYPES,
+    &imports::EXPORTS,
+    &arch::DECORATORS,
+    &arch::ERRORS,
+];
+
+/// [`SCAN_PARTS`] compiled into one query for a grammar, with what is needed
+/// to hand each match back to the part it came from.
+struct Combined {
+    query: tree_sitter::Query,
+    /// Pattern index → part index.
+    part_of_pattern: Vec<usize>,
+    /// Per part: combined capture index → that part's own capture index.
+    captures: Vec<Vec<Option<usize>>>,
+}
+
+fn combined(lang: SupportedLanguage) -> Option<&'static Combined> {
+    static TYPESCRIPT: std::sync::OnceLock<Combined> = std::sync::OnceLock::new();
+    static TSX: std::sync::OnceLock<Combined> = std::sync::OnceLock::new();
+    let slot = match lang.grammar() {
+        SupportedLanguage::TypeScript => &TYPESCRIPT,
+        SupportedLanguage::Tsx => &TSX,
+        _ => return None,
+    };
+    Some(slot.get_or_init(|| {
+        let text: String = SCAN_PARTS.iter().map(|part| part.source()).collect();
+        let query = query::compile(lang.grammar(), &text);
+        let mut part_of_pattern = Vec::new();
+        let mut captures = Vec::new();
+        for (index, part) in SCAN_PARTS.iter().enumerate() {
+            let own = part
+                .get(lang)
+                .expect("a script part compiles for a script grammar");
+            part_of_pattern.extend(std::iter::repeat_n(index, own.pattern_count()));
+            captures.push(
+                query
+                    .capture_names()
+                    .iter()
+                    .map(|name| own.capture_names().iter().position(|n| n == name))
+                    .collect(),
+            );
+        }
+        Combined {
+            query,
+            part_of_pattern,
+            captures,
+        }
+    }))
+}
+
+/// One run of [`SCAN_PARTS`] over a file.
+pub(crate) struct Pass<'a> {
+    parts: Vec<Vec<(usize, tree_sitter::Node<'a>)>>,
+}
+
+impl<'a> Pass<'a> {
+    pub(crate) fn new(lang: SupportedLanguage, tree: &'a Tree, source: &str) -> Self {
+        let mut parts = vec![Vec::new(); SCAN_PARTS.len()];
+        if let Some(combined) = combined(lang) {
+            let mut cursor = tree_sitter::QueryCursor::new();
+            let mut matches = cursor.matches(&combined.query, tree.root_node(), source.as_bytes());
+            while let Some(found) = tree_sitter::StreamingIterator::next(&mut matches) {
+                let part = combined.part_of_pattern[found.pattern_index];
+                for capture in found.captures() {
+                    if let Some(own) = combined.captures[part][capture.index as usize] {
+                        parts[part].push((own, capture.node));
+                    }
+                }
+            }
+        }
+        Pass { parts }
+    }
+
+    /// The captures `query` would have produced on its own, in its own
+    /// capture numbering. `query` must be one of [`SCAN_PARTS`].
+    pub(crate) fn run(&self, query: &'static ScriptQuery) -> Vec<(usize, tree_sitter::Node<'a>)> {
+        let part = SCAN_PARTS
+            .iter()
+            .position(|part| std::ptr::eq(*part, query))
+            .expect("Pass::run is only for the scan's combined queries");
+        self.parts[part].clone()
+    }
+}
+
 pub(crate) fn run<'a>(
     query: &'static ScriptQuery,
     lang: SupportedLanguage,
@@ -460,7 +555,7 @@ pub(crate) fn run<'a>(
     source: &str,
 ) -> Vec<(usize, tree_sitter::Node<'a>)> {
     match query.get(lang) {
-        Some(compiled) => query::captures(compiled, tree, source),
+        Some(compiled) => query::captures(compiled, query.max_depth(), tree, source),
         None => Vec::new(),
     }
 }
@@ -736,5 +831,39 @@ export default loadUser;
         total += python;
         assert_eq!(total.script.control_flow, Count::from_sides(3, 1));
         assert_eq!(total.python.control_flow, Count::from_sides(0, 5));
+    }
+
+    #[test]
+    fn one_combined_pass_finds_exactly_what_each_query_finds_alone() {
+        let sources = [
+            include_str!("../../../tests/fixtures/typescript/decorator-swap/before.ts"),
+            include_str!("../../../tests/fixtures/typescript/control-flow/before.ts"),
+            include_str!("../../../tests/fixtures/typescript/error-class/after.ts"),
+            include_str!("../../../tests/fixtures/typescript/type-swap/before.ts"),
+            include_str!("../../../tests/fixtures/typescript/function-syntax/after.ts"),
+            "export * from './a';\nexport type { B } from './b';\nexport default function f() {}\n@Injectable()\nexport class C {\n  @Get() m() { if (x) { return 1; } else { throw new Error('x'); } }\n}\nconst g = () => { return 2; };\ninterface I { a: string }\ntype T = { b: number };\n",
+        ];
+        for lang in [
+            SupportedLanguage::TypeScript,
+            SupportedLanguage::Tsx,
+            SupportedLanguage::JavaScript,
+        ] {
+            for source in sources {
+                let tree = super::super::parse(lang, source).unwrap();
+                let pass = Pass::new(lang, &tree, source);
+                for part in SCAN_PARTS {
+                    let alone: Vec<_> = run(part, lang, &tree, source)
+                        .into_iter()
+                        .map(|(index, node)| (index, node.byte_range()))
+                        .collect();
+                    let shared: Vec<_> = pass
+                        .run(part)
+                        .into_iter()
+                        .map(|(index, node)| (index, node.byte_range()))
+                        .collect();
+                    assert_eq!(shared, alone, "{} part {:?}", lang.name(), part.source());
+                }
+            }
+        }
     }
 }

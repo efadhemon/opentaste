@@ -111,18 +111,26 @@ pub(crate) fn managed_classes<'a>(
     source: &str,
     imports: &HashMap<String, String>,
 ) -> Vec<(Node<'a>, Framework)> {
-    let mut found = Vec::new();
-    let mut stack = vec![tree.root_node()];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "class_declaration" {
-            if let Some(framework) = framework_of(node, source, imports) {
-                found.push((node, framework));
-            }
-        }
-        let mut cursor = node.walk();
-        stack.extend(node.named_children(&mut cursor));
-    }
-    found
+    module_classes(tree)
+        .into_iter()
+        .filter_map(|class| Some((class, framework_of(class, source, imports)?)))
+        .collect()
+}
+
+/// The classes a module declares at its top level, exported or not. Nest and
+/// Angular register only these, so the rest of the tree is not walked.
+fn module_classes(tree: &Tree) -> Vec<Node<'_>> {
+    let root = tree.root_node();
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor)
+        .filter_map(|statement| match statement.kind() {
+            "class_declaration" => Some(statement),
+            "export_statement" => statement
+                .child_by_field_name("declaration")
+                .filter(|declaration| declaration.kind() == "class_declaration"),
+            _ => None,
+        })
+        .collect()
 }
 
 /// How a managed class receives its dependencies.
@@ -288,21 +296,13 @@ pub(crate) fn is_project_service(
     named && from_project
 }
 
-/// Names of the classes declared in the file.
+/// Names of the classes the file declares at its top level.
 pub(crate) fn local_classes(tree: &Tree, source: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut stack = vec![tree.root_node()];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "class_declaration" {
-            found.extend(
-                node.child_by_field_name("name")
-                    .map(|name| node_text(name, source).to_string()),
-            );
-        }
-        let mut cursor = node.walk();
-        stack.extend(node.named_children(&mut cursor));
-    }
-    found
+    module_classes(tree)
+        .into_iter()
+        .filter_map(|class| class.child_by_field_name("name"))
+        .map(|name| node_text(name, source).to_string())
+        .collect()
 }
 
 pub(super) fn injection(lang: SupportedLanguage, tree: &Tree, source: &str) -> Injection {
@@ -311,6 +311,13 @@ pub(super) fn injection(lang: SupportedLanguage, tree: &Tree, source: &str) -> I
         return counts;
     }
     let imports = import_sources(tree, source);
+    // Only a file importing from a DI framework can have a managed class.
+    let from_framework = imports
+        .values()
+        .any(|from| from.starts_with("@nestjs/") || from == "@angular/core");
+    if !from_framework {
+        return counts;
+    }
     let locals = local_classes(tree, source);
     let (mut nest, mut angular, mut constructed) = ((0, 0), (0, 0), (0, 0));
     for (class, framework) in managed_classes(tree, source, &imports) {

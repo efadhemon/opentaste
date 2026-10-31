@@ -2,13 +2,14 @@
 
 use tree_sitter::{Node, Tree};
 
-use super::{run, Count};
+use super::{run, Count, Pass};
 use crate::ast::query::{self, ScriptQuery};
 use crate::ast::SupportedLanguage;
 
-static IMPORTS: ScriptQuery = ScriptQuery::new("(import_statement source: (string) @source) @stmt");
+static IMPORTS: ScriptQuery =
+    ScriptQuery::top_level("(import_statement source: (string) @source) @stmt");
 
-static EXPORTS: ScriptQuery = ScriptQuery::new("(export_statement) @export");
+pub(super) static EXPORTS: ScriptQuery = ScriptQuery::new("(export_statement) @export");
 
 pub(super) fn import_paths(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
     let mut alias = 0u32;
@@ -27,10 +28,10 @@ pub(super) fn import_paths(lang: SupportedLanguage, tree: &Tree, source: &str) -
     Count::from_sides(alias, deep)
 }
 
-pub(super) fn exports(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
+pub(super) fn exports(pass: &Pass<'_>) -> Count {
     let mut named = 0u32;
     let mut defaulted = 0u32;
-    for (_, node) in run(&EXPORTS, lang, tree, source) {
+    for (_, node) in pass.run(&EXPORTS) {
         // Re-exports (`export * from`, `export { x } from`) and type-only
         // lists (`export type { A }`) say how a barrel is assembled, not how
         // modules export what they define. Counting them made barrel-heavy

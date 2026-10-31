@@ -13,6 +13,11 @@ use super::SupportedLanguage;
 /// A query compiled once for the TypeScript grammar and once for TSX.
 pub(crate) struct ScriptQuery {
     source: &'static str,
+    /// Only match nodes this deep or shallower (the root is depth 0), so a
+    /// query for something that can only be top-level does not visit the
+    /// whole tree. Running a query costs about as much as walking every node,
+    /// and a file runs several.
+    max_depth: Option<u32>,
     typescript: OnceLock<Query>,
     tsx: OnceLock<Query>,
 }
@@ -21,9 +26,29 @@ impl ScriptQuery {
     pub(crate) const fn new(source: &'static str) -> Self {
         Self {
             source,
+            max_depth: None,
             typescript: OnceLock::new(),
             tsx: OnceLock::new(),
         }
+    }
+
+    /// A query for statements that only exist at the top of a module, such as
+    /// `import` declarations.
+    pub(crate) const fn top_level(source: &'static str) -> Self {
+        Self {
+            source,
+            max_depth: Some(1),
+            typescript: OnceLock::new(),
+            tsx: OnceLock::new(),
+        }
+    }
+
+    pub(crate) fn source(&self) -> &'static str {
+        self.source
+    }
+
+    pub(crate) fn max_depth(&self) -> Option<u32> {
+        self.max_depth
     }
 
     /// The compiled query for `lang`, or `None` when `lang` is not a script language.
@@ -50,17 +75,27 @@ pub(crate) fn compile(lang: SupportedLanguage, source: &str) -> Query {
 ///
 /// Nodes are copied out of the streaming iterator, which would otherwise
 /// invalidate them on the next step.
-pub(crate) fn captures<'a>(query: &Query, tree: &'a Tree, source: &str) -> Vec<(usize, Node<'a>)> {
-    matches(query, tree, source).into_iter().flatten().collect()
+pub(crate) fn captures<'a>(
+    query: &Query,
+    max_depth: Option<u32>,
+    tree: &'a Tree,
+    source: &str,
+) -> Vec<(usize, Node<'a>)> {
+    matches(query, max_depth, tree, source)
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// Captures grouped by match, so a name and the node that carried it stay together.
 pub(crate) fn matches<'a>(
     query: &Query,
+    max_depth: Option<u32>,
     tree: &'a Tree,
     source: &str,
 ) -> Vec<Vec<(usize, Node<'a>)>> {
     let mut cursor = QueryCursor::new();
+    cursor.set_max_start_depth(max_depth);
     let mut found = cursor.matches(query, tree.root_node(), source.as_bytes());
     let mut groups = Vec::new();
     while let Some(matched) = found.next() {

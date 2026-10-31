@@ -1,12 +1,12 @@
 //! Function syntax and early-return guards.
 
-use tree_sitter::{Node, Tree};
+use tree_sitter::Node;
 
-use super::{run, Count};
+use super::{Count, Pass};
 use crate::ast::query::ScriptQuery;
 use crate::ast::SupportedLanguage;
 
-static SYNTAX: ScriptQuery = ScriptQuery::new(
+pub(super) static SYNTAX: ScriptQuery = ScriptQuery::new(
     r#"
     (function_declaration name: (identifier) @name) @function
     (lexical_declaration
@@ -17,7 +17,7 @@ static SYNTAX: ScriptQuery = ScriptQuery::new(
     "#,
 );
 
-static BODIES: ScriptQuery = ScriptQuery::new(
+pub(super) static BODIES: ScriptQuery = ScriptQuery::new(
     r#"
     (function_declaration body: (statement_block) @body)
     (method_definition body: (statement_block) @body)
@@ -28,10 +28,10 @@ static BODIES: ScriptQuery = ScriptQuery::new(
     "#,
 );
 
-pub(super) fn function_syntax(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
+pub(super) fn function_syntax(lang: SupportedLanguage, pass: &Pass<'_>) -> Count {
     let mut declarations = 0u32;
     let mut arrows = 0u32;
-    for (index, _) in run(&SYNTAX, lang, tree, source) {
+    for (index, _) in pass.run(&SYNTAX) {
         match capture(&SYNTAX, lang, index) {
             "function" => declarations += 1,
             "arrow_binding" => arrows += 1,
@@ -41,10 +41,10 @@ pub(super) fn function_syntax(lang: SupportedLanguage, tree: &Tree, source: &str
     Count::from_sides(declarations, arrows)
 }
 
-pub(super) fn control_flow(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
+pub(super) fn control_flow(lang: SupportedLanguage, pass: &Pass<'_>) -> Count {
     let mut guards = 0u32;
     let mut nested = 0u32;
-    for (index, node) in run(&BODIES, lang, tree, source) {
+    for (index, node) in pass.run(&BODIES) {
         if capture(&BODIES, lang, index) != "body" {
             continue;
         }

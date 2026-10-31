@@ -19,7 +19,7 @@ phase reference to **Shipped**.
 | Three loops: scan, delta learner, MCP | **Shipped**: `ast/scan.rs`, `taste learn-delta` + extension, `taste-mcp` |
 | Scanner reads "recent Git history" | **Shipped** (phase 10): `taste scan --history N`, and `taste init` with a 200-commit / 180-day window; `taste-cli/src/commands/history.rs` |
 | tree-sitter + rayon | **Shipped**: `ast/parser.rs`, `par_iter` in `ast/scan.rs` |
-| Scan timings and "<300ms" | Phase 12 step 3 (M9), which also replaces the claim with measured numbers |
+| Scan timings and "<300ms" | **Shipped** (phase 12 step 3): 1,000 files cold in 282–294 ms on four cores, measured by `taste-core/tests/scan_bench.rs`; SPEC.md §1 states the measured numbers |
 | Rules at ≥ 0.80 are synced to the five targets | **Shipped**: `TasteRule::is_active`, `transpiler/` |
 
 ## §2: directory structure
@@ -49,7 +49,7 @@ phase reference to **Shipped**.
 | `taste-cli` commands: init, scan, sync, learn, status, watch | **Shipped** |
 | `scan.rs`: "repo & git log analysis" | Repo **shipped**; git log in phase 10 |
 | `tui/app.rs`: list, filter, toggle, delete | **Shipped** |
-| `tui/app.rs`: edit | Phase 12 step 1 (M7) |
+| `tui/app.rs`: edit | **Shipped** (phase 12 step 1): `[e]`, saved through `RuleStore::update_rule` |
 | Extension: `extension.ts`, `deltaTracker.ts`, `binaryRunner.ts`, `statusBar.ts` | **Shipped** |
 | npm wrapper `bin/taste.js` | **Shipped** as `@opentaste/cli` |
 | `npx opentaste` | Cannot be built as written (name taken); decided in phase 13 step 4 (M11) |
@@ -107,7 +107,7 @@ phase reference to **Shipped**.
 | `taste scan` with `WalkParallel` | Scan **shipped**; parallel walk in phase 12 step 3 |
 | `taste sync`, `learn-delta`, `status`, `ui` | **Shipped** |
 | Dashboard 45/55 panes, confidence bar, category badge, keybindings | **Shipped** |
-| Syntax-highlighted avoid/prefer box | Phase 12 step 2 (M8) |
+| Syntax-highlighted avoid/prefer box | **Shipped** (phase 12 step 2): `tui/highlight.rs` |
 
 ## §9: extension
 
