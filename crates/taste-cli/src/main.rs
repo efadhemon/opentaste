@@ -40,7 +40,12 @@ enum Command {
     /// MCP entry and the post-commit hook, then scan and sync.
     Init,
     /// Infer rules from the repository's code.
-    Scan,
+    Scan {
+        /// Also learn from the last COMMITS non-merge commits on this branch,
+        /// after the newest one already read. `0` reads none.
+        #[arg(long, value_name = "COMMITS")]
+        history: Option<usize>,
+    },
     /// Write confirmed rules into every editor instruction file.
     Sync,
     /// Learn from one edit: reads `{"before": …, "after": …}` on stdin and
@@ -102,7 +107,7 @@ fn run(command: Command, out: &Output) -> anyhow::Result<()> {
     let store = open_store(&cwd)?;
     match command {
         Command::Init => unreachable!("handled above"),
-        Command::Scan => commands::scan::run(&store, out),
+        Command::Scan { history } => commands::scan::run(&store, history, out),
         Command::Sync => commands::sync::run(&store, out),
         Command::LearnDelta { file } => commands::learn_delta::run(&store, &file),
         Command::Learn { .. } => commands::learn::run(&store, out),

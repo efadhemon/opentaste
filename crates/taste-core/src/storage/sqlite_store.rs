@@ -16,7 +16,7 @@ use crate::models::{round2, CandidateRule, RuleCategory, RuleSource};
 use crate::storage::atomic::ensure_parent_dir;
 
 /// Schema version this build expects; bumped whenever a migration is added.
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 /// A recorded AST fingerprint for one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +139,19 @@ impl SqliteStore {
                 CREATE TABLE IF NOT EXISTS pending_deltas (
                     key TEXT PRIMARY KEY,
                     recorded_at TEXT NOT NULL
+                );
+                "#,
+            )?;
+        }
+
+        if current < 5 {
+            // Small facts about the cache itself, such as the newest commit
+            // `taste scan --history` has read, so the next run starts there.
+            self.conn.execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS cache_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 );
                 "#,
             )?;
@@ -280,6 +293,30 @@ impl SqliteStore {
         self.conn.execute(
             "INSERT OR IGNORE INTO learned_changes (fingerprint, learned_at) VALUES (?1, ?2)",
             params![fingerprint, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// A value stored with [`SqliteStore::set_meta`].
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM cache_meta WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Store `value` under `key`, replacing what was there.
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO cache_meta (key, value) VALUES (?1, ?2)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            "#,
+            params![key, value],
         )?;
         Ok(())
     }
@@ -579,6 +616,7 @@ mod tests {
             "rejected_rules",
             "learned_changes",
             "pending_deltas",
+            "cache_meta",
         ] {
             let found: i32 = store
                 .connection()
@@ -590,6 +628,18 @@ mod tests {
                 .unwrap();
             assert_eq!(found, 1, "missing table {table}");
         }
+    }
+
+    #[test]
+    fn a_meta_value_is_replaced_by_the_next_one() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        assert_eq!(store.get_meta("history.cursor").unwrap(), None);
+        store.set_meta("history.cursor", "abc").unwrap();
+        store.set_meta("history.cursor", "def").unwrap();
+        assert_eq!(
+            store.get_meta("history.cursor").unwrap().as_deref(),
+            Some("def")
+        );
     }
 
     #[test]

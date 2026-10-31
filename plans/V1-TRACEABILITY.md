@@ -17,7 +17,7 @@ phase reference to **Shipped**.
 | Works with Cursor, Claude Code, Windsurf, VS Code Copilot, Zed | **Shipped**: five sync targets (`config::Paths`). Zed via `AGENTS.md`; phase 13 step 2 confirms Zed's current rules-file behaviour and states it in SPEC.md |
 | MIT, offline, zero telemetry | **Shipped**: no network crate in the dependency tree; no telemetry code |
 | Three loops: scan, delta learner, MCP | **Shipped**: `ast/scan.rs`, `taste learn-delta` + extension, `taste-mcp` |
-| Scanner reads "recent Git history" | Phase 10 (M1) |
+| Scanner reads "recent Git history" | **Shipped** (phase 10): `taste scan --history N`, and `taste init` with a 200-commit / 180-day window; `taste-cli/src/commands/history.rs` |
 | tree-sitter + rayon | **Shipped**: `ast/parser.rs`, `par_iter` in `ast/scan.rs` |
 | Scan timings and "<300ms" | Phase 12 step 3 (M9), which also replaces the claim with measured numbers |
 | Rules at ≥ 0.80 are synced to the five targets | **Shipped**: `TasteRule::is_active`, `transpiler/` |
@@ -78,7 +78,7 @@ phase reference to **Shipped**.
 | Starting confidences 0.45 / 0.95 / scan ratio ≥ 0.80 over ≥ 10 files | **Shipped** |
 | Reinforcement `+0.20 × (1 − c)`, ceiling 0.99 | **Shipped** |
 | Promotion at ≥ 0.80 and ≥ 3 sightings (or chat) | **Shipped** |
-| Promotion triggers `taste sync` | **Shipped** in `learn-delta`, the hook, MCP, `init` and `watch`. A standalone `taste scan` confirms rules without syncing: phase 10 step 4 (W13) |
+| Promotion triggers `taste sync` | **Shipped** in `learn-delta`, the hook, MCP, `init`, `watch` and, since phase 10 step 4 (W13), a standalone `taste scan` |
 | Contradiction decay `× 0.75` | **Shipped** |
 | Demotion below 0.50 | **Shipped** in phase 7 step 1 (was unreachable) |
 | §5.2 detectors 1–7, including control-flow flattening | **Shipped** (AGENTS.md still lists control flow as deferred: phase 13 step 3, D6) |

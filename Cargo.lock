@@ -1963,6 +1963,7 @@ dependencies = [
  "notify",
  "pretty_assertions",
  "ratatui",
+ "rayon",
  "serde",
  "serde_json",
  "taste-core",

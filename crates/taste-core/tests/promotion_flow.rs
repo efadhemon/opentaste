@@ -408,3 +408,45 @@ fn the_store_survives_being_reopened_between_observations() {
     assert_eq!(rules.rules[0].occurrences, 6);
     assert!(store.candidate_rules().unwrap().is_empty());
 }
+
+#[test]
+fn a_correction_towards_one_side_decays_the_candidate_for_the_other() {
+    use taste_core::ast::{PREFER_ARROW_FUNCTIONS, PREFER_FUNCTION_DECLARATIONS};
+    let project = Project::with_cache_db();
+    let observe = |instruction: &str, scope: &str| {
+        project
+            .store
+            .record_observation(Observation::new(
+                RuleCategory::CodeStyle,
+                scope,
+                RuleSource::AstDiff,
+                instruction,
+            ))
+            .unwrap()
+    };
+    // The team used arrows, then moved to function declarations.
+    observe(PREFER_ARROW_FUNCTIONS, "packages/ui/**/*.tsx");
+    observe(PREFER_ARROW_FUNCTIONS, "packages/ui/**/*.tsx");
+    observe(PREFER_ARROW_FUNCTIONS, "apps/web/**/*.tsx");
+    for _ in 0..3 {
+        observe(PREFER_FUNCTION_DECLARATIONS, "packages/ui/**/*.tsx");
+    }
+    let candidates = project.store.candidate_rules().unwrap();
+    let find = |instruction: &str, scope: &str| {
+        candidates
+            .iter()
+            .find(|c| c.instruction == instruction && c.scope == scope)
+            .unwrap()
+            .clone()
+    };
+    let arrows = find(PREFER_ARROW_FUNCTIONS, "packages/ui/**/*.tsx");
+    let declarations = find(PREFER_FUNCTION_DECLARATIONS, "packages/ui/**/*.tsx");
+    assert_eq!(arrows.contradictions, 3);
+    assert!(arrows.confidence < 0.30, "{}", arrows.confidence);
+    assert_eq!(declarations.confidence, 0.65);
+    assert_eq!(
+        find(PREFER_ARROW_FUNCTIONS, "apps/web/**/*.tsx").contradictions,
+        0,
+        "another package's candidate is untouched"
+    );
+}

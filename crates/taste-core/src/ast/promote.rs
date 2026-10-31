@@ -471,6 +471,41 @@ fn ratio(part: u32, total: u32) -> f32 {
     part as f32 / total as f32
 }
 
+/// For an instruction naming one side of a symmetric choice, how many
+/// occurrences the current code has of that side and of the other:
+/// `(same, opposite)`. `None` for asymmetric and configuration rules.
+///
+/// History mining uses it to drop a past correction the code has since
+/// reversed: a team that moved from arrows to `function` declarations left
+/// arrow corrections in its history that are not its taste any more.
+pub fn current_sides(tally: &Tally, instruction: &str) -> Option<(u32, u32)> {
+    let (s, py, rs) = (&tally.script, &tally.python, &tally.rust);
+    let (count, left) = match instruction {
+        PREFER_PATH_ALIASES => (s.import_paths, true),
+        PREFER_DEEP_RELATIVE => (s.import_paths, false),
+        PREFER_NAMED_EXPORTS => (s.exports, true),
+        PREFER_DEFAULT_EXPORTS => (s.exports, false),
+        PREFER_INTERFACE => (s.type_constructs, true),
+        PREFER_TYPE_ALIAS => (s.type_constructs, false),
+        PREFER_FUNCTION_DECLARATIONS => (s.function_syntax, true),
+        PREFER_ARROW_FUNCTIONS => (s.function_syntax, false),
+        NEST_CONSTRUCTOR_INJECTION => (s.nest_injection, true),
+        NEST_PROPERTY_INJECTION => (s.nest_injection, false),
+        ANGULAR_CONSTRUCTOR_INJECTION => (s.angular_injection, true),
+        ANGULAR_INJECT_FUNCTION => (s.angular_injection, false),
+        PY_PREFER_ABSOLUTE_IMPORTS => (py.imports, true),
+        PY_PREFER_RELATIVE_IMPORTS => (py.imports, false),
+        RS_PREFER_CRATE_PATHS => (rs.imports, true),
+        RS_PREFER_SUPER_PATHS => (rs.imports, false),
+        _ => return None,
+    };
+    Some(if left {
+        (count.left, count.right)
+    } else {
+        (count.right, count.left)
+    })
+}
+
 /// Every instruction a rule saying `instruction` cannot coexist with: the
 /// other side of a symmetric choice, or every other validation library.
 pub fn conflicting_instructions(instruction: &str) -> Vec<&'static str> {
@@ -791,5 +826,23 @@ mod tests {
             ..Tally::default()
         })
         .is_empty());
+    }
+
+    #[test]
+    fn the_current_sides_of_a_symmetric_choice_are_read_from_the_tally() {
+        let script = ScriptTally {
+            function_syntax: files(31, 9, 12),
+            ..ScriptTally::default()
+        };
+        let tally = Tally {
+            script,
+            ..Tally::default()
+        };
+        assert_eq!(current_sides(&tally, PREFER_ARROW_FUNCTIONS), Some((9, 31)));
+        assert_eq!(
+            current_sides(&tally, PREFER_FUNCTION_DECLARATIONS),
+            Some((31, 9))
+        );
+        assert_eq!(current_sides(&tally, PREFER_GUARD_CLAUSES), None);
     }
 }

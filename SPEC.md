@@ -12,7 +12,7 @@
 
 It operates through three local intelligence loops:
 
-1. **Cold-Start AST Repo Scanner (`taste scan`):** Parses existing source files and recent Git history using native `tree-sitter` and `rayon` multi-threading to extract statistical codebase norms. A cold scan of a 134-file NestJS tree took 157 ms in a debug build. A cold scan of a 991-file tree took 321 ms in a release build, so `<300ms` holds for a small repository and is not a ceiling for every size.
+1. **Cold-Start AST Repo Scanner (`taste scan`):** Parses existing source files and recent Git history using native `tree-sitter` and `rayon` multi-threading to extract statistical codebase norms. History is a bounded window: `taste init` reads the last 200 non-merge commits on the first-parent chain or 180 days, whichever is fewer, and `taste scan --history N` reads the last `N`; both start after the newest commit already read. Commits by bots, reverts and sweeps touching over 50 files are skipped. History records corrections only, never contradictions, counts each change once (the post-commit hook shares its fingerprints), and leaves out a past correction towards one side of a symmetric choice when the code today mostly takes the other. 200 commits read in under a second on the repositories measured in `plans/PHASE-10.md`. A cold scan of a 134-file NestJS tree took 157 ms in a debug build. A cold scan of a 991-file tree took 321 ms in a release build, so `<300ms` holds for a small repository and is not a ceiling for every size.
 2. **Post-AI Structural Delta Learner (`taste learn-delta` + IDE Extension):** Detects when an AI agent generates code and the human developer subsequently edits/fixes that exact code block. It computes the AST diff (`AI Output -> Human Correction`) and extracts a candidate taste rule.
 3. **Host-Agent MCP Piggybacking (`taste mcp`):** Runs a lightweight `stdio` Model Context Protocol (MCP) server so the user's existing AI editor (Cursor/Claude) automatically saves explicit preferences into the local database whenever corrected in chat.
 
@@ -399,7 +399,7 @@ Implements JSON-RPC 2.0 over `stdin`/`stdout` with zero external runtime depende
   3. Injects `.cursor/mcp.json` entry for `opentaste` (`{"command": "taste", "args": ["mcp"]}`).
   4. Installs `.git/hooks/post-commit` script (`taste learn --from-git-head &`).
   5. Runs initial `taste scan` and `taste sync`.
-- `taste scan`: Walks repository using `ignore::WalkParallel`, parses ASTs, populates initial high-confidence rules.
+- `taste scan [--history N]`: Walks repository using `ignore::WalkParallel`, parses ASTs, populates initial high-confidence rules, optionally reads the last `N` commits of history, and runs `taste sync` when it confirmed or retracted anything.
 - `taste sync`: Compiles `.taste/rules.json` into Cursor, Claude, Windsurf, and Copilot instruction files.
 - `taste learn-delta --file <path>`: Reads JSON payload `{"before": "...", "after": "..."}` from `stdin`, runs structural diff analysis, updates candidate/confirmed rules, and prints any newly promoted rule as JSON.
 - `taste status`: Prints a clean summary table of learned rules and synced editor targets.
