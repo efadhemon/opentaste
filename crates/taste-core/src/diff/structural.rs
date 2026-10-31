@@ -1056,7 +1056,7 @@ struct ImportBinding {
     statement: String,
 }
 
-static IMPORTS: ScriptQuery = ScriptQuery::new("(import_statement) @stmt");
+static IMPORTS: ScriptQuery = ScriptQuery::top_level("(import_statement) @stmt");
 
 fn imports(tree: &Tree, source: &str) -> HashMap<String, ImportBinding> {
     let mut found = HashMap::new();
@@ -1413,7 +1413,7 @@ fn for_each_match<'a>(
         return;
     };
     let names = compiled.capture_names();
-    for group in crate::ast::matches(compiled, tree, source) {
+    for group in crate::ast::matches(compiled, query.max_depth(), tree, source) {
         on_match(names, &group);
     }
 }

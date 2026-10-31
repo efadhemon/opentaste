@@ -1,20 +1,22 @@
 //! Parallel repository walk.
 //!
-//! Paths are collected with the serial `ignore` walker and then parsed on the
-//! rayon pool. `ignore`'s parallel walker has its own thread pool and a
-//! callback API, which does not compose with rayon's `fold`/`reduce` without a
-//! lock around the tally. The walk is not the bottleneck. Snapshots and
-//! observations are written only after the parallel phase, and observations
-//! are recorded before snapshots: a crash in between re-scans the files
-//! instead of permanently skipping a promotion that never landed.
+//! Files are found, read and hashed on the `ignore` crate's parallel walker,
+//! collected under one lock, and sorted by path so the result does not depend
+//! on which walker thread finished first. Every cached snapshot is loaded
+//! once into a map. Changed files are then parsed and counted on the rayon
+//! pool. Snapshots and observations are written only after the parallel
+//! phase, snapshots in one transaction, and observations are recorded before
+//! snapshots: a crash in between re-scans the files instead of permanently
+//! skipping a promotion that never landed.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use chrono::Utc;
 use globset::{GlobBuilder, GlobSetBuilder};
-use ignore::WalkBuilder;
+use ignore::{DirEntry, WalkBuilder, WalkState};
 use rayon::prelude::*;
 use serde_json::Value;
 
@@ -68,82 +70,32 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     let root = &store.paths().project_root;
     let mut pending = Vec::new();
     let mut cached: Vec<Tally> = Vec::new();
-    let mut files_skipped = 0usize;
     let mut unchanged = 0usize;
     let mut seen = HashSet::new();
-    let mut tsconfigs = Vec::new();
 
-    for entry in WalkBuilder::new(root)
-        .standard_filters(true)
-        // A `.gitignore` is the developer's exclusion list even before `git init`.
-        .require_git(false)
-        .git_global(false)
-        // The root itself is never filtered: a project checked out as `build/`
-        // is still a project.
-        .filter_entry(|entry| entry.depth() == 0 || !is_generated(entry.path(), entry.file_type()))
-        .build()
-    {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let path = entry.path();
-        if path
-            .file_name()
-            .is_some_and(|name| name == tsconfig::TSCONFIG)
-        {
-            tsconfigs.push(PathBuf::from(relative_key(root, path)));
-            continue;
-        }
-        // Checked before anything is read: a language with no analyzers would
-        // be read, hashed, parsed and snapshotted for no counts at all.
-        let Some(lang) = SupportedLanguage::from_path(path).filter(|lang| lang.has_analyzers())
-        else {
-            continue;
-        };
-        if is_test_or_script(Path::new(&relative_key(root, path)), lang) {
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
-            files_skipped += 1;
-            continue;
-        };
-        if !metadata.is_file() {
-            continue;
-        }
-        if metadata.len() > MAX_FILE_BYTES {
+    let walked = walk(root);
+    let mut files_skipped = walked.skipped;
+    let tsconfigs = walked.tsconfigs;
+    // One query for every snapshot rather than one per file.
+    let snapshots: HashMap<String, FileSnapshot> = store
+        .candidates()
+        .list_snapshots()?
+        .into_iter()
+        .map(|snapshot| (snapshot.file_path.clone(), snapshot))
+        .collect();
+    for file in walked.files {
+        seen.insert(file.relative.clone());
+        let reused = snapshots
+            .get(&file.relative)
+            .filter(|snapshot| snapshot.content_hash == file.hash)
+            .and_then(|snapshot| decode_tally(&snapshot.ast_signature));
+        if let Some(tally) = reused {
+            cached.push(tally);
+            unchanged += 1;
             files_skipped += 1;
             continue;
         }
-        let bytes = match fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                files_skipped += 1;
-                continue;
-            }
-        };
-        let Ok(source) = String::from_utf8(bytes) else {
-            files_skipped += 1;
-            continue;
-        };
-        let hash = content_hash(source.as_bytes());
-        let relative = relative_key(root, path);
-        seen.insert(relative.clone());
-        if let Some(snapshot) = store.candidates().get_snapshot(&relative)? {
-            if snapshot.content_hash == hash {
-                if let Some(tally) = decode_tally(&snapshot.ast_signature) {
-                    cached.push(tally);
-                    unchanged += 1;
-                    files_skipped += 1;
-                    continue;
-                }
-            }
-        }
-        pending.push(PendingFile {
-            relative,
-            hash,
-            source,
-            lang,
-        });
+        pending.push(file);
     }
 
     let fresh: Vec<Tally> = pending
@@ -188,14 +140,17 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
     }
 
     let captured_at = Utc::now();
-    for (file, tally) in pending.iter().zip(&fresh) {
-        store.candidates().upsert_snapshot(&FileSnapshot {
+    let written: Vec<FileSnapshot> = pending
+        .iter()
+        .zip(&fresh)
+        .map(|(file, tally)| FileSnapshot {
             file_path: file.relative.clone(),
             content_hash: file.hash.clone(),
             ast_signature: encode_tally(tally),
             captured_at,
-        })?;
-    }
+        })
+        .collect();
+    store.candidates().upsert_snapshots(&written)?;
     store.candidates().retain_snapshots(&seen)?;
 
     Ok(ScanReport {
@@ -205,6 +160,106 @@ pub fn scan(store: &RuleStore) -> Result<ScanReport> {
         outcomes,
         retracted,
     })
+}
+
+/// What the walk found, sorted by path so a scan is deterministic whatever
+/// order the walker threads finished in.
+struct Walked {
+    files: Vec<PendingFile>,
+    tsconfigs: Vec<PathBuf>,
+    /// Supported files not read: too large, unreadable or not UTF-8.
+    skipped: usize,
+}
+
+enum Found {
+    File(PendingFile),
+    Tsconfig(PathBuf),
+    Skipped,
+}
+
+/// Walk `root` on the `ignore` crate's parallel walker, reading and hashing
+/// each source file in the walker thread that found it.
+fn walk(root: &Path) -> Walked {
+    let found = Mutex::new(Vec::new());
+    WalkBuilder::new(root)
+        .standard_filters(true)
+        // A `.gitignore` is the developer's exclusion list even before `git init`.
+        .require_git(false)
+        .git_global(false)
+        // The root itself is never filtered: a project checked out as `build/`
+        // is still a project.
+        .filter_entry(|entry| entry.depth() == 0 || !is_generated(entry.path(), entry.file_type()))
+        .build_parallel()
+        .run(|| {
+            let found = &found;
+            Box::new(move |entry| {
+                if let Some(item) = entry.ok().and_then(|entry| visit(root, &entry)) {
+                    found
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .push(item);
+                }
+                WalkState::Continue
+            })
+        });
+    let mut walked = Walked {
+        files: Vec::new(),
+        tsconfigs: Vec::new(),
+        skipped: 0,
+    };
+    for item in found
+        .into_inner()
+        .unwrap_or_else(|poison| poison.into_inner())
+    {
+        match item {
+            Found::File(file) => walked.files.push(file),
+            Found::Tsconfig(path) => walked.tsconfigs.push(path),
+            Found::Skipped => walked.skipped += 1,
+        }
+    }
+    walked.files.sort_by(|a, b| a.relative.cmp(&b.relative));
+    walked.tsconfigs.sort();
+    walked
+}
+
+/// Read and hash one walked entry, or say why it is not a file to scan.
+fn visit(root: &Path, entry: &DirEntry) -> Option<Found> {
+    let path = entry.path();
+    if path
+        .file_name()
+        .is_some_and(|name| name == tsconfig::TSCONFIG)
+    {
+        return Some(Found::Tsconfig(PathBuf::from(relative_key(root, path))));
+    }
+    // Checked before anything is read: a language with no analyzers would
+    // be read, hashed, parsed and snapshotted for no counts at all.
+    let lang = SupportedLanguage::from_path(path).filter(|lang| lang.has_analyzers())?;
+    let relative = relative_key(root, path);
+    if is_test_or_script(Path::new(&relative), lang) {
+        return None;
+    }
+    let Ok(metadata) = entry.metadata() else {
+        return Some(Found::Skipped);
+    };
+    if !metadata.is_file() {
+        return None;
+    }
+    if metadata.len() > MAX_FILE_BYTES {
+        return Some(Found::Skipped);
+    }
+    let Some(source) = fs::read(path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+    else {
+        return Some(Found::Skipped);
+    };
+    let hash = content_hash(source.as_bytes());
+    Some(Found::File(PendingFile {
+        relative,
+        hash,
+        source,
+        lang,
+    }))
 }
 
 /// Directories that hold installed, built or vendored code, skipped whether

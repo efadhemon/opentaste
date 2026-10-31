@@ -32,6 +32,8 @@ globset = "0.4"
 similar = { version = "3.2", features = ["inline"] }
 rusqlite = { version = "0.41", features = ["bundled"] }
 tree-sitter = "0.27"
+# The dashboard highlights snippets with the grammars above; same 0.27 line.
+tree-sitter-highlight = "0.27"
 tree-sitter-typescript = "0.23"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"

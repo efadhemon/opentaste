@@ -181,6 +181,10 @@ pub(crate) fn used_libraries(tree: &Tree, source: &str) -> Vec<(Library, HashSet
 pub(super) fn validation(lang: SupportedLanguage, tree: &Tree, source: &str) -> Validation {
     let mut counts = Validation::default();
     let imports = imported(tree, source);
+    // Most files import no validation library; skip the walk for them.
+    if imports.is_empty() {
+        return counts;
+    }
     let names: HashSet<&str> = imports.iter().map(|(_, name)| name.as_str()).collect();
     let uses = value_uses(tree, source, &names);
     for (library, name) in &imports {

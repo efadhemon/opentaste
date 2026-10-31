@@ -450,3 +450,104 @@ fn a_correction_towards_one_side_decays_the_candidate_for_the_other() {
         "another package's candidate is untouched"
     );
 }
+
+mod editing {
+    use super::*;
+    use taste_core::Edit;
+
+    fn confirmed(project: &Project, scope: &str, instruction: &str) -> String {
+        project
+            .store
+            .record_observation(Observation::new(
+                RuleCategory::CodeStyle,
+                scope,
+                RuleSource::Manual,
+                instruction,
+            ))
+            .unwrap()
+            .promoted()
+            .unwrap()
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn a_confirmed_rule_is_reworded_and_rescoped_in_place_keeping_its_id() {
+        let project = Project::with_cache_db();
+        let id = confirmed(&project, "src/**/*.ts", "Prefer early returns.");
+        let outcome = project
+            .store
+            .update_rule(
+                &id,
+                "Prefer early returns over nested else.",
+                " apps/**/*.ts ",
+            )
+            .unwrap();
+        assert_eq!(outcome, Edit::Updated);
+        let rules = project.store.rules().unwrap();
+        let rule = rules.find(&id).expect("same id");
+        assert_eq!(rule.instruction, "Prefer early returns over nested else.");
+        assert_eq!(rule.scope, "apps/**/*.ts");
+    }
+
+    #[test]
+    fn a_candidate_is_edited_in_the_cache() {
+        let project = Project::with_cache_db();
+        let created = project
+            .store
+            .record_observation(Observation::new(
+                RuleCategory::CodeStyle,
+                "src/**/*.ts",
+                RuleSource::AstDiff,
+                "Prefer a logger.",
+            ))
+            .unwrap();
+        let Outcome::Created { id, .. } = created else {
+            panic!("{created:?}");
+        };
+        assert_eq!(
+            project
+                .store
+                .update_rule(&id, "Log through the logger service.", "src/**/*.ts")
+                .unwrap(),
+            Edit::Updated
+        );
+        let candidate = project.store.candidate_rules().unwrap().pop().unwrap();
+        assert_eq!(candidate.id, id);
+        assert_eq!(candidate.instruction, "Log through the logger service.");
+        assert!(project.store.rules().unwrap().rules.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_scope_an_empty_instruction_or_a_duplicate_writes_nothing() {
+        let project = Project::with_cache_db();
+        let id = confirmed(&project, "src/**/*.ts", "Prefer early returns.");
+        let other = confirmed(&project, "src/**/*.ts", "Prefer named exports.");
+        let before = project.store.rules().unwrap();
+
+        assert!(project
+            .store
+            .update_rule(&id, "Prefer early returns.", "src/[")
+            .is_err());
+        assert_eq!(
+            project
+                .store
+                .update_rule(&id, "   ", "src/**/*.ts")
+                .unwrap(),
+            Edit::EmptyInstruction
+        );
+        assert_eq!(
+            project
+                .store
+                .update_rule(&id, "Prefer named exports!", "src/**/*.ts")
+                .unwrap(),
+            Edit::Duplicate(other),
+            "rewording one rule into another is not an edit"
+        );
+        assert_eq!(project.store.rules().unwrap(), before);
+        assert_eq!(
+            project.store.update_rule("nope", "x", "**/*").unwrap(),
+            Edit::NotFound
+        );
+    }
+}

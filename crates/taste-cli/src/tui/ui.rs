@@ -14,15 +14,23 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wra
 use ratatui::Frame;
 
 use crate::output::Glyphs;
-use crate::tui::app::{App, Entry, Mode};
+use crate::tui::app::{App, EditState, Entry, Field, Mode};
+use crate::tui::highlight;
 
 const BAR_WIDTH: usize = 5;
 
 pub fn draw(frame: &mut Frame, app: &App, glyphs: &Glyphs) {
+    let area = frame.area();
+    let bottom = status_lines(app, usize::from(area.width));
+    // The bar grows to fit a narrow terminal, but never squeezes the panes
+    // below five rows.
+    let height = (bottom.len() as u16)
+        .min(area.height.saturating_sub(5))
+        .max(1);
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(2)])
-        .split(frame.area());
+        .constraints([Constraint::Min(5), Constraint::Length(height)])
+        .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
@@ -30,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &App, glyphs: &Glyphs) {
 
     draw_list(frame, panes[0], app, glyphs);
     draw_detail(frame, panes[1], app);
-    draw_status(frame, rows[1], app);
+    frame.render_widget(Paragraph::new(bottom), rows[1]);
 }
 
 pub fn confidence_bar(confidence: f32, glyphs: &Glyphs) -> String {
@@ -115,7 +123,51 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App, glyphs: &Glyphs) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// The two editable fields, the focused one with a `▏` at the cursor.
+fn draw_edit(frame: &mut Frame, area: Rect, state: &EditState) {
+    let label = Style::default().add_modifier(Modifier::BOLD);
+    let field = |name: &str, text: &str, focused: bool| {
+        let mut shown = text.to_string();
+        if focused {
+            let at = shown
+                .char_indices()
+                .nth(state.cursor)
+                .map_or(shown.len(), |(i, _)| i);
+            shown.insert(at, '▏');
+        }
+        let style = if focused {
+            Style::default().add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        };
+        vec![
+            Line::styled(name.to_string(), label),
+            Line::styled(shown, style),
+            Line::raw(""),
+        ]
+    };
+    let mut lines = vec![Line::raw(format!("Editing {}", state.id)), Line::raw("")];
+    lines.extend(field(
+        "Instruction",
+        &state.instruction,
+        state.field == Field::Instruction,
+    ));
+    lines.extend(field(
+        "Scope (glob)",
+        &state.scope,
+        state.field == Field::Scope,
+    ));
+    let detail = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" Edit "))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(detail, area);
+}
+
 fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
+    if let Mode::Edit(state) = &app.mode {
+        draw_edit(frame, area, state);
+        return;
+    }
     let block = Block::default().borders(Borders::ALL).title(" Detail ");
     let Some(entry) = app.selected() else {
         let empty = Paragraph::new("Nothing selected.").block(block);
@@ -134,7 +186,7 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "confirmed, disabled"
     };
-    let mut lines = vec![
+    let lines = vec![
         Line::from(vec![
             Span::styled("Scope        ", label),
             Span::raw(entry.scope().to_string()),
@@ -160,57 +212,116 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
         Line::styled("Instruction", label),
         Line::raw(entry.instruction().to_string()),
     ];
-    let snippet = |title: &str, text: Option<&str>, colour: Color, lines: &mut Vec<Line>| {
-        let Some(text) = text else {
-            return;
-        };
-        lines.push(Line::raw(""));
-        lines.push(Line::styled(title.to_string(), label.fg(colour)));
-        for line in text.lines() {
-            lines.push(Line::styled(
-                format!("  {line}"),
-                Style::default().fg(colour),
-            ));
-        }
-    };
-    snippet(
-        "Anti-Pattern (Avoid)",
-        entry.anti_pattern(),
-        Color::Red,
-        &mut lines,
+    // The avoid and prefer snippets get boxes of their own: the border and
+    // title carry the red/green distinction, so the text can be coloured by
+    // syntax.
+    let colours = highlight::colours_enabled();
+    let snippets: Vec<(&str, &str, Color)> = [
+        (
+            "Anti-Pattern (Avoid)",
+            entry.anti_pattern(),
+            highlight::AVOID,
+        ),
+        (
+            "Preferred-Pattern (Use)",
+            entry.preferred_pattern(),
+            highlight::PREFER,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(title, text, colour)| text.map(|text| (title, text, colour)))
+    .collect();
+    let mut constraints = vec![Constraint::Min(3)];
+    constraints.extend(
+        snippets
+            .iter()
+            .map(|(_, text, _)| Constraint::Length(text.lines().count() as u16 + 2)),
     );
-    snippet(
-        "Preferred-Pattern (Use)",
-        entry.preferred_pattern(),
-        Color::Green,
-        &mut lines,
-    );
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
 
     let detail = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(detail, area);
+    frame.render_widget(detail, parts[0]);
+    for ((title, text, colour), part) in snippets.into_iter().zip(parts.iter().skip(1)) {
+        let border = if colours {
+            Style::default().fg(colour)
+        } else {
+            Style::default()
+        };
+        let body = highlight::snippet_lines(text, entry.scope(), colours, colour);
+        let snippet = Paragraph::new(body).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border)
+                .title(format!(" {title} ")),
+        );
+        frame.render_widget(snippet, *part);
+    }
 }
 
 pub const KEYS: &str =
-    "[↑/↓] Navigate | [Space] Toggle Enable | [g] Personal | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
+    "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [g] Personal | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
 
-fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
+/// The key bar and the status message, as the lines a terminal `width`
+/// columns wide shows. Keys are wrapped between entries, never inside one, so
+/// a narrow terminal shows every key on more lines instead of cutting the
+/// last ones off; the message wraps between words.
+fn status_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let keys = match &app.mode {
         Mode::ConfirmDelete(_) => "[y] Delete | any other key cancels".to_string(),
+        Mode::Edit(_) => {
+            "[Tab] Switch field | [←/→] Move | [Enter] Save and sync | [Esc] Cancel".to_string()
+        }
         Mode::Filter => "[Enter] Keep filter | [Esc] Clear filter | [Backspace] Edit".to_string(),
         Mode::Normal => KEYS.to_string(),
     };
     let status_style = if matches!(app.mode, Mode::ConfirmDelete(_)) {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(highlight::AVOID)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(highlight::STATUS)
     };
-    let bar = Paragraph::new(vec![
-        Line::styled(keys, Style::default().add_modifier(Modifier::DIM)),
-        Line::styled(app.status.clone(), status_style),
-    ]);
-    frame.render_widget(bar, area);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<Line<'static>> = wrap(keys.split(" | "), " | ", width)
+        .into_iter()
+        .map(|line| Line::styled(line, dim))
+        .collect();
+    if !app.status.is_empty() {
+        lines.extend(
+            wrap(app.status.split_whitespace(), " ", width)
+                .into_iter()
+                .map(|line| Line::styled(line, status_style)),
+        );
+    }
+    lines
+}
+
+/// `items` joined by `separator` into lines of at most `width` columns,
+/// breaking only between items. An item wider than a line gets one to itself.
+fn wrap<'a>(items: impl Iterator<Item = &'a str>, separator: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for item in items {
+        let joined = current.chars().count() + separator.chars().count() + item.chars().count();
+        if current.is_empty() {
+            current = item.to_string();
+        } else if joined <= width {
+            current.push_str(separator);
+            current.push_str(item);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = item.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -225,7 +336,11 @@ mod tests {
     use taste_core::{Observation, RuleCategory, RuleStore};
 
     fn screen(app: &App, glyphs: &Glyphs) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(140, 24)).unwrap();
+        screen_sized(app, glyphs, 140, 24)
+    }
+
+    fn screen_sized(app: &App, glyphs: &Glyphs, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, app, glyphs)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         let mut text = String::new();
@@ -291,5 +406,75 @@ mod tests {
         let confirming = screen(&app, &ASCII);
         assert!(confirming.contains("[y] Delete"), "{confirming}");
         assert!(confirming.contains("[x]"), "ascii glyphs: {confirming}");
+    }
+
+    #[test]
+    fn the_edit_pane_shows_both_fields_and_its_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RuleStore::open_ephemeral(Paths::for_root(dir.path())).unwrap();
+        store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "**/*.ts",
+                RuleSource::Manual,
+                "Prefer interface for object types.",
+            ))
+            .unwrap();
+        let mut app = App::load(&store).unwrap();
+        app.on_key(Key::Char('e'), &store);
+        let text = screen(&app, &UNICODE);
+        assert!(text.contains(" Edit "), "{text}");
+        assert!(
+            text.contains("Scope (glob)") && text.contains("**/*.ts"),
+            "{text}"
+        );
+        assert!(
+            text.contains("object types.▏"),
+            "the cursor sits at the end: {text}"
+        );
+        assert!(text.contains("[Enter] Save and sync"), "{text}");
+        assert!(screen(&App::load(&store).unwrap(), &UNICODE).contains("[e] Edit"));
+    }
+
+    #[test]
+    fn keys_wrap_between_entries_and_every_line_fits() {
+        let lines = wrap(KEYS.split(" | "), " | ", 40);
+        assert!(lines.len() > 1);
+        for line in &lines {
+            assert!(line.chars().count() <= 40, "{line:?}");
+            assert!(!line.starts_with(" |") && !line.ends_with("| "), "{line:?}");
+        }
+        let rejoined = lines.join(" | ");
+        assert_eq!(rejoined, KEYS, "nothing is lost or reordered");
+        assert_eq!(wrap(KEYS.split(" | "), " | ", 1000), vec![KEYS.to_string()]);
+        assert_eq!(
+            wrap(["a-very-long-entry", "b"].into_iter(), " | ", 5),
+            vec!["a-very-long-entry".to_string(), "b".to_string()],
+            "an entry wider than the line gets one to itself"
+        );
+    }
+
+    #[test]
+    fn a_narrow_terminal_still_shows_every_key_and_the_whole_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RuleStore::open_ephemeral(Paths::for_root(dir.path())).unwrap();
+        store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "**/*.ts",
+                RuleSource::Manual,
+                "Prefer interface for object types.",
+            ))
+            .unwrap();
+        let mut app = App::load(&store).unwrap();
+        let narrow = screen_sized(&app, &UNICODE, 60, 24);
+        for key in KEYS.split(" | ") {
+            assert!(narrow.contains(key), "{key:?} is cut off:\n{narrow}");
+        }
+
+        app.on_key(Key::Char('d'), &store);
+        let confirming = screen_sized(&app, &ASCII, 60, 24);
+        let flat: String = confirming.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("anything else cancels."), "{confirming}");
     }
 }

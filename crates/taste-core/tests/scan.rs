@@ -674,3 +674,68 @@ fn a_mixed_angular_codebase_gets_no_injection_style_rule() {
         "70% inject() is not a convention: {instructions:?}"
     );
 }
+
+/// A tree spread over many directories, so the parallel walker's threads
+/// finish in a different order from run to run.
+fn write_spread_tree(project: &Project) {
+    for index in 0..120 {
+        let import = if index % 6 == 0 {
+            "../../lib/a"
+        } else {
+            "@/lib/a"
+        };
+        project.write(
+            &format!("pkg{}/src/d{}/f{index}.ts", index % 7, index % 11),
+            &format!("import {{ a }} from \"{import}\";\nexport function f{index}() {{\n  if (!a) {{\n    return 0;\n  }}\n  return 1;\n}}\n"),
+        );
+    }
+    for index in 0..20 {
+        project.write(
+            &format!("svc/m{}/f{index}.py", index % 3),
+            "import logging\n\nlogger = logging.getLogger(__name__)\n\n\ndef run(job: str) -> None:\n    logger.info(job)\n",
+        );
+    }
+}
+
+/// What a scan wrote, without the timestamps that differ between runs.
+fn written(project: &Project) -> (Vec<String>, Vec<(String, String, String)>) {
+    let rules = project
+        .store
+        .rules()
+        .unwrap()
+        .rules
+        .into_iter()
+        .map(|rule| {
+            format!(
+                "{} {} {} {}",
+                rule.id, rule.scope, rule.confidence, rule.instruction
+            )
+        })
+        .collect();
+    let snapshots = project
+        .store
+        .candidates()
+        .list_snapshots()
+        .unwrap()
+        .into_iter()
+        .map(|s| (s.file_path, s.content_hash, s.ast_signature))
+        .collect();
+    (rules, snapshots)
+}
+
+#[test]
+fn two_scans_of_the_same_tree_write_the_same_rules_and_snapshots() {
+    let first = Project::with_cache_db();
+    write_spread_tree(&first);
+    let report = scan(&first.store).unwrap();
+    assert_eq!(report.files_scanned, 140);
+    let expected = written(&first);
+    assert!(!expected.0.is_empty(), "the tree is meant to promote rules");
+    for _ in 0..5 {
+        let again = Project::with_cache_db();
+        write_spread_tree(&again);
+        let other = scan(&again.store).unwrap();
+        assert_eq!(other.tallies, report.tallies);
+        assert_eq!(written(&again), expected);
+    }
+}
