@@ -71,15 +71,22 @@ read it and approved or changed it, and this section records the decision.
 
 ## Step 3: Commands and MCP
 
-- [ ] `taste global add <id>`, `taste global list`, `taste global remove
-      <id>`, `taste global suggest`, `taste global off|on`.
-- [ ] `get_coding_taste` returns matching personal rules after project
+- [x] `taste global add <id>`, `taste global list`, `taste global remove
+      <id>`, `taste global suggest`, `taste global off|on`. (`add` takes a
+      confirmed rule here or a suggested one, with `--keep-snippets` to take
+      its code along.)
+- [x] `get_coding_taste` returns matching personal rules after project
       rules, each marked as personal; `record_coding_taste` accepts
-      `"global": true`.
-- [ ] Every confirmation in a project records the project in `seen_in`, so
-      suggestions can be computed.
-- [ ] Tests: each command; precedence over an opposite project rule;
-      opting out; MCP output marks personal rules.
+      `"global": true`. (Without snippets, which are the project's code.)
+- [x] Every confirmation in a project records the project in `seen_in`, so
+      suggestions can be computed. (Including the scan inside `taste init`,
+      which opened its store without personal rules attached until the CLI
+      test for suggestions failed on it.)
+- [x] Tests: each command; precedence over an opposite project rule;
+      opting out; MCP output marks personal rules. Every test that runs the
+      binary sets `TASTE_HOME` to a temporary directory, the extension's
+      end-to-end test included, so the suite never writes to the real
+      `~/.taste`.
 
 ## Step 4: User-level instruction files
 

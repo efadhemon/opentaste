@@ -57,7 +57,9 @@ pub fn run(cwd: &Path, out: &Output) -> anyhow::Result<()> {
     let root = paths.project_root.clone();
     let fresh = !paths.rules_json.exists();
 
-    let store = RuleStore::open(paths.clone()).context("creating .taste/cache.db")?;
+    let store = crate::commands::with_personal_rules(
+        RuleStore::open(paths.clone()).context("creating .taste/cache.db")?,
+    );
     store.ensure_rules_file()?;
     if fresh {
         out.say(format!("Setting up OpenTaste in {}", root.display()));

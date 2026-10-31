@@ -16,6 +16,9 @@ import { isLearnable, parseTargets } from '../targets';
 import { FakeDocument } from './fakeDocument';
 
 const binary = process.env.TASTE_BIN;
+// Personal rules go to a throwaway home, never the real ~/.taste; the
+// binary inherits this environment.
+process.env.TASTE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'opentaste-home-'));
 
 test('a corrected AI edit becomes a rule through the real binary', { skip: !binary && 'set TASTE_BIN' }, async () => {
   const taste = binary as string;

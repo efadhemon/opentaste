@@ -3,8 +3,16 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// A home directory for every `taste` this test binary runs, so personal
+/// rules are written there and never to the real `~/.taste`.
+fn test_home() -> &'static std::path::Path {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| tempfile::tempdir().unwrap()).path()
+}
+
 fn taste(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .args(args)
         .current_dir(dir)
         .output()
@@ -232,6 +240,7 @@ fn quiet_init_prints_nothing() {
 fn taste_with_stdin(dir: &Path, args: &[&str], stdin: &str) -> Output {
     use std::io::Write;
     let mut child = Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .args(args)
         .current_dir(dir)
         .stdin(std::process::Stdio::piped())
@@ -751,6 +760,7 @@ fn status_shows_rules_candidates_scan_counts_and_target_freshness() {
 
 fn taste_env(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .args(args)
         .current_dir(dir)
         .envs(env.iter().copied())
@@ -803,6 +813,7 @@ fn watch_rescans_after_a_source_file_is_saved() {
 
     let dir = initialised();
     let mut child = Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .arg("watch")
         .current_dir(dir.path())
         .stdout(std::process::Stdio::piped())
@@ -840,6 +851,7 @@ fn watch_rescans_after_a_source_file_is_saved() {
 fn a_reader_that_closes_early_does_not_make_taste_panic() {
     let dir = initialised();
     let mut child = Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .arg("status")
         .current_dir(dir.path())
         .stdout(std::process::Stdio::piped())

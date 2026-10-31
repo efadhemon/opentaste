@@ -449,3 +449,108 @@ fn crlf_line_endings_are_accepted() {
     let line: Value = serde_json::from_slice(output.trim_ascii_end()).unwrap();
     assert_eq!(line["id"], json!(8));
 }
+
+mod personal {
+    use super::*;
+    use taste_core::storage::GlobalStore;
+
+    /// A session whose store is attached to the personal rules in `home`.
+    fn session_in(home: &std::path::Path) -> Session {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::for_root(dir.path());
+        let store = RuleStore::open_ephemeral(paths.clone())
+            .unwrap()
+            .with_global(GlobalStore::open(home).unwrap());
+        Session {
+            _dir: dir,
+            paths,
+            store,
+        }
+    }
+
+    fn record(session: &Session, instruction: &str, global: bool) -> Value {
+        session.call(
+            "record_coding_taste",
+            json!({
+                "category": "code-style",
+                "scope": "**/*.ts",
+                "instruction": instruction,
+                "anti_pattern": "console.log(user)",
+                "preferred_pattern": "logger.info(user)",
+                "global": global,
+            }),
+        )
+    }
+
+    #[test]
+    fn a_preference_recorded_as_global_is_served_in_another_project_marked_personal() {
+        let home = tempfile::tempdir().unwrap();
+        let origin = session_in(home.path());
+        let recorded = record(
+            &origin,
+            "Log through the logger service, never the console.",
+            true,
+        );
+        assert!(!is_error(&recorded), "{}", text(&recorded));
+        assert!(
+            text(&recorded).contains("personal rules now"),
+            "{}",
+            text(&recorded)
+        );
+
+        let other = session_in(home.path());
+        let got = other.call("get_coding_taste", json!({ "file_path": "src/app.ts" }));
+        let answer = text(&got);
+        assert!(answer.contains("Personal preferences"), "{answer}");
+        assert!(
+            answer.contains("(personal) [code-style] Log through the logger service"),
+            "{answer}"
+        );
+        assert!(
+            !answer.contains("console.log(user)"),
+            "snippets stay in their project: {answer}"
+        );
+
+        let none = other.call("get_coding_taste", json!({ "file_path": "src/app.py" }));
+        assert!(
+            text(&none).starts_with("No OpenTaste preferences"),
+            "{}",
+            text(&none)
+        );
+        assert!(
+            !other.paths.claude_md().exists()
+                || !std::fs::read_to_string(other.paths.claude_md())
+                    .unwrap()
+                    .contains("logger service")
+        );
+    }
+
+    #[test]
+    fn a_preference_recorded_without_global_stays_in_its_project() {
+        let home = tempfile::tempdir().unwrap();
+        let origin = session_in(home.path());
+        record(
+            &origin,
+            "Log through the logger service, never the console.",
+            false,
+        );
+        let other = session_in(home.path());
+        let got = other.call("get_coding_taste", json!({ "file_path": "src/app.ts" }));
+        assert!(
+            text(&got).starts_with("No OpenTaste preferences"),
+            "{}",
+            text(&got)
+        );
+    }
+
+    #[test]
+    fn global_must_be_a_boolean() {
+        let home = tempfile::tempdir().unwrap();
+        let session = session_in(home.path());
+        let result = session.call(
+            "record_coding_taste",
+            json!({ "category": "code-style", "scope": "**/*", "instruction": "x y z", "global": "yes" }),
+        );
+        assert!(is_error(&result));
+    }
+}
