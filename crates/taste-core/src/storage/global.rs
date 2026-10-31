@@ -30,6 +30,7 @@ const SCHEMA_VERSION: i32 = 1;
 #[derive(Debug)]
 pub struct GlobalStore {
     conn: Connection,
+    home: PathBuf,
     lock_file: PathBuf,
 }
 
@@ -54,6 +55,7 @@ impl GlobalStore {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = GlobalStore {
             conn,
+            home: home.to_path_buf(),
             lock_file: dir.join(LOCK_FILE),
         };
         store.migrate()?;
@@ -87,6 +89,12 @@ impl GlobalStore {
         self.conn
             .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
+    }
+
+    /// The home directory this store lives in, where user-level instruction
+    /// files are written too.
+    pub fn home(&self) -> &Path {
+        &self.home
     }
 
     fn lock(&self) -> Result<TasteLock> {

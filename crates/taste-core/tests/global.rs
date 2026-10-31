@@ -130,3 +130,68 @@ fn a_store_without_personal_rules_attached_serves_none() {
         .is_empty());
     assert!(project.store.global().is_none());
 }
+
+#[test]
+fn personal_rules_reach_the_user_level_files_of_installed_editors_and_never_the_project() {
+    let home = tempfile::tempdir().unwrap();
+    // Claude Code is installed and has the user's own notes; Codex is
+    // installed with no file yet; Windsurf is not installed.
+    std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+    std::fs::write(
+        home.path().join(".claude/CLAUDE.md"),
+        "# My notes\n\nBe terse.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.path().join(".codex")).unwrap();
+
+    let (dir, project) = project_in(home.path());
+    let id = confirm(&project, "**/*", "Write commit messages in the imperative.");
+    let rule = project.rules().unwrap().find(&id).unwrap().clone();
+    // Personal only: the project's own copy is deleted from its rule file.
+    project.delete_rule(&id).unwrap();
+    project
+        .global()
+        .unwrap()
+        .add(&rule, false, dir.path())
+        .unwrap();
+    project.sync().unwrap();
+
+    let claude = std::fs::read_to_string(home.path().join(".claude/CLAUDE.md")).unwrap();
+    assert!(claude.starts_with("# My notes\n\nBe terse.\n"), "{claude}");
+    assert!(
+        claude.contains("Personal Coding Preferences") && claude.contains("imperative"),
+        "{claude}"
+    );
+    assert!(
+        std::fs::read_to_string(home.path().join(".codex/AGENTS.md"))
+            .unwrap()
+            .contains("imperative")
+    );
+    assert!(
+        !home.path().join(".codeium").exists(),
+        "no folder for an editor that is not installed"
+    );
+
+    for file in [
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".windsurfrules",
+        ".github/copilot-instructions.md",
+    ] {
+        let text = std::fs::read_to_string(dir.path().join(file)).unwrap_or_default();
+        assert!(
+            !text.contains("imperative"),
+            "{file} holds a personal rule: {text}"
+        );
+    }
+
+    // Removing the last personal rule withdraws the blocks, keeps the notes,
+    // and deletes the file OpenTaste created whole.
+    project.global().unwrap().remove(&id).unwrap();
+    project.sync().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(home.path().join(".claude/CLAUDE.md")).unwrap(),
+        "# My notes\n\nBe terse.\n"
+    );
+    assert!(!home.path().join(".codex/AGENTS.md").exists());
+}

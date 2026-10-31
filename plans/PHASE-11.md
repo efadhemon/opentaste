@@ -90,13 +90,21 @@ read it and approved or changed it, and this section records the decision.
 
 ## Step 4: User-level instruction files
 
-- [ ] `taste sync` also writes personal rules into the user-level files of
+- [x] `taste sync` also writes personal rules into the user-level files of
       the editors that read one, using `transpiler/marker.rs`. Which files
       those are is one list, owned by `config::Paths`, like the project
-      targets.
-- [ ] Never writes personal rules into any project file.
-- [ ] Tests: user-level file created and spliced without touching existing
-      content; project files never contain a personal rule.
+      targets. (`Paths::user_targets`: `~/.claude/CLAUDE.md`,
+      `~/.codeium/windsurf/memories/global_rules.md`, `~/.codex/AGENTS.md`,
+      each only when that editor's directory exists. Cursor and Copilot keep
+      user rules in their settings, not a file, so they get personal rules
+      through MCP only. The user-level file lists every enabled personal
+      rule; per-project precedence applies through MCP, and the block says a
+      project's own conventions come first.)
+- [x] Never writes personal rules into any project file.
+- [x] Tests: user-level file created and spliced without touching existing
+      content; project files never contain a personal rule. (Also: no folder
+      created for an editor that is not installed, and the blocks withdrawn
+      when the last personal rule goes.)
 
 ## Step 5: Dashboard and status
 

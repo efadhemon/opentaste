@@ -10,6 +10,7 @@ use taste_core::config::Paths;
 use taste_core::storage::GlobalStore;
 use taste_core::{RuleStore, TasteRule};
 
+use crate::commands::sync;
 use crate::output::Output;
 
 /// What `taste global` was asked to do.
@@ -64,6 +65,7 @@ pub fn run(store: &RuleStore, action: Action, out: &Output) -> anyhow::Result<()
                     "  Its snippets were left in this project; pass --keep-snippets to take them.",
                 );
             }
+            sync::report_sync(&store.sync()?, store, out);
         }
         Action::List => {
             let rules = global.list()?;
@@ -82,6 +84,7 @@ pub fn run(store: &RuleStore, action: Action, out: &Output) -> anyhow::Result<()
                 bail!("{rule_id} is not a personal rule");
             }
             out.say(format!("Removed {rule_id} from your personal rules."));
+            sync::report_sync(&store.sync()?, store, out);
         }
         Action::Suggest => {
             let suggestions = global.suggestions()?;

@@ -145,6 +145,22 @@ impl Paths {
         ]
     }
 
+    /// The user-level instruction files personal rules are written to, each
+    /// with the directory that shows its editor is installed. Nothing is
+    /// written for an editor whose directory does not exist. Cursor and
+    /// Copilot keep user rules in their settings, not in a file, so they are
+    /// served personal rules through MCP only.
+    pub fn user_targets(home: &Path) -> [(PathBuf, PathBuf); 3] {
+        [
+            (home.join(".claude"), home.join(".claude").join("CLAUDE.md")),
+            (
+                home.join(".codeium").join("windsurf"),
+                home.join(".codeium/windsurf/memories/global_rules.md"),
+            ),
+            (home.join(".codex"), home.join(".codex").join("AGENTS.md")),
+        ]
+    }
+
     /// Whether `path`, absolute or relative to the project root, is a file the
     /// transpiler writes. Reacting to these would make a watcher answer its
     /// own output.

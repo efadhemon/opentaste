@@ -74,12 +74,28 @@ pub fn category_body(rules: &[&TasteRule]) -> String {
 /// and `.github/copilot-instructions.md`. Returns an empty string when there is
 /// nothing to say.
 pub fn sections(rules: &[TasteRule]) -> String {
+    sections_under(
+        "## Coding Taste & Project Conventions (Auto-Learned)\n",
+        rules,
+    )
+}
+
+/// [`sections`] for a user-level file: the developer's personal rules, which
+/// a project's own conventions override.
+pub fn personal_sections(rules: &[TasteRule]) -> String {
+    sections_under(
+        "## Personal Coding Preferences (OpenTaste)\n\nYour own preferences, across projects. Where a project's own conventions say otherwise, follow the project.\n",
+        rules,
+    )
+}
+
+fn sections_under(heading: &str, rules: &[TasteRule]) -> String {
     let grouped = group_by_category(rules);
     if grouped.is_empty() {
         return String::new();
     }
 
-    let mut out = String::from("## Coding Taste & Project Conventions (Auto-Learned)\n");
+    let mut out = String::from(heading);
     for (category, group) in &grouped {
         out.push_str(&format!("\n### {}\n\n", category.title()));
         out.push_str(&category_body(group));

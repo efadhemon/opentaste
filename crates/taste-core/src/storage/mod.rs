@@ -512,7 +512,15 @@ impl RuleStore {
     pub fn sync(&self) -> Result<crate::transpiler::SyncReport> {
         let _guard = self.lock()?;
         let rules = self.json.load()?;
-        crate::transpiler::sync_all(&self.paths, &rules.rules)
+        let mut report = crate::transpiler::sync_all(&self.paths, &rules.rules)?;
+        // Personal rules go to the user-level files, never this project's.
+        if let Some(global) = &self.global {
+            let personal = crate::transpiler::sync_personal(global.home(), &global.list()?)?;
+            report.written.extend(personal.written);
+            report.unchanged.extend(personal.unchanged);
+            report.removed.extend(personal.removed);
+        }
+        Ok(report)
     }
 
     /// Reinforce a rule that is already confirmed.
