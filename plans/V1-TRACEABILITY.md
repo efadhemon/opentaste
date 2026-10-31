@@ -27,7 +27,7 @@ phase reference to **Shipped**.
 | Claim | Status |
 | --- | --- |
 | `config.rs` paths for `rules.json`, `cache.db` | **Shipped** |
-| `config.rs` / `sqlite_store.rs`: `~/.taste/global.db` | Phase 11 (M6) |
+| `config.rs` / `sqlite_store.rs`: `~/.taste/global.db` | **Shipped** (phase 11): `storage/global.rs`, `taste global`, personal rules over MCP and in user-level files |
 | `models.rs` types | **Shipped** |
 | `parser.rs`: TS/JS, Python, Rust, Go | **Shipped**: parsing, and analyzers and detectors for all four (phase 8, `ast/analyzers/{python,rust,go}.rs`, `diff/{python,rust,go}.rs`) |
 | `imports.rs`: alias vs relative, named vs default | **Shipped**; barrel exports fixed in phase 7 |
@@ -69,7 +69,7 @@ phase reference to **Shipped**.
 | `detected_stack` like `typescript, nestjs, react, postgresql` | **Shipped** in phase 7 step 5 |
 | `RuleCategory`, `RuleSource`, `TasteRule`, `RulesFile`, `ProjectContext` | **Shipped** |
 | SQLite `candidate_rules`, `file_snapshots` | **Shipped** (plus `rejected_rules`, `learned_changes`, `pending_deltas`) |
-| Same schema for `global.db` | Phase 11 step 2 |
+| Same schema for `global.db` | **Changed** (phase 11 step 2): `global.db` holds personal rules and sightings only; candidates and snapshots are per project. SPEC.md §4.3 says so |
 
 ## §5: core engine
 

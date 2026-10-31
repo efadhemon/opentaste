@@ -38,6 +38,8 @@ pub struct Glyphs {
     pub confirmed: &'static str,
     pub candidate: &'static str,
     pub off: &'static str,
+    /// A personal rule from another project.
+    pub personal: &'static str,
     pub bar_full: &'static str,
     pub bar_empty: &'static str,
 }
@@ -46,6 +48,7 @@ pub const UNICODE: Glyphs = Glyphs {
     confirmed: "[✓]",
     candidate: "[?]",
     off: "[ ]",
+    personal: "[★]",
     bar_full: "█",
     bar_empty: "░",
 };
@@ -54,6 +57,7 @@ pub const ASCII: Glyphs = Glyphs {
     confirmed: "[x]",
     candidate: "[?]",
     off: "[ ]",
+    personal: "[*]",
     bar_full: "#",
     bar_empty: ".",
 };

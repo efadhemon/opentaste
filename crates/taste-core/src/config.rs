@@ -89,10 +89,19 @@ impl Paths {
             })
     }
 
+    /// The home directory personal rules live under: `$TASTE_HOME` when it
+    /// is set, so tests and sandboxes never touch the real one, and the
+    /// user's home directory otherwise. A missing home is a clear error.
+    pub fn home() -> Result<PathBuf> {
+        if let Some(home) = std::env::var_os("TASTE_HOME").filter(|home| !home.is_empty()) {
+            return Ok(PathBuf::from(home));
+        }
+        dirs::home_dir().ok_or(Error::HomeDirNotFound)
+    }
+
     /// Path to the cross-project database, `~/.taste/global.db`.
     pub fn global_db() -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or(Error::HomeDirNotFound)?;
-        Ok(home.join(TASTE_DIR).join(GLOBAL_DB_FILE))
+        Ok(Self::home()?.join(TASTE_DIR).join(GLOBAL_DB_FILE))
     }
 
     /// Directory holding generated Cursor rule files.
@@ -133,6 +142,22 @@ impl Paths {
             self.windsurf_rules(),
             self.agents_md(),
             self.copilot_instructions(),
+        ]
+    }
+
+    /// The user-level instruction files personal rules are written to, each
+    /// with the directory that shows its editor is installed. Nothing is
+    /// written for an editor whose directory does not exist. Cursor and
+    /// Copilot keep user rules in their settings, not in a file, so they are
+    /// served personal rules through MCP only.
+    pub fn user_targets(home: &Path) -> [(PathBuf, PathBuf); 3] {
+        [
+            (home.join(".claude"), home.join(".claude").join("CLAUDE.md")),
+            (
+                home.join(".codeium").join("windsurf"),
+                home.join(".codeium/windsurf/memories/global_rules.md"),
+            ),
+            (home.join(".codex"), home.join(".codex").join("AGENTS.md")),
         ]
     }
 

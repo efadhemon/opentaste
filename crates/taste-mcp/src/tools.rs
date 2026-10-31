@@ -73,6 +73,13 @@ pub fn definitions() -> Value {
                     "preferred_pattern": {
                         "type": "string",
                         "description": "Optional short snippet of the code the user wants instead."
+                    },
+                    "global": {
+                        "type": "boolean",
+                        "description": "Also keep this as one of the user's personal preferences, \
+                            served in their other projects. Only when the user says it is how \
+                            they always work, not just this project's convention.",
+                        "default": false
                     }
                 },
                 "required": ["category", "scope", "instruction"]
@@ -128,17 +135,28 @@ fn result(text: String, is_error: bool) -> Value {
 fn get(arguments: &Value, store: &RuleStore) -> ToolResult {
     let file_path = required_str(arguments, "file_path")?;
     let rules = store.rules_for_file(file_path).map_err(failed)?;
-    if rules.is_empty() {
+    let personal = store.personal_rules_for_file(file_path).map_err(failed)?;
+    if rules.is_empty() && personal.is_empty() {
         return Ok(format!("No OpenTaste preferences apply to {file_path}."));
     }
+    let total = rules.len() + personal.len();
     let mut text = format!(
         "{} OpenTaste preference{} appl{} to {file_path}:\n",
-        rules.len(),
-        if rules.len() == 1 { "" } else { "s" },
-        if rules.len() == 1 { "ies" } else { "y" },
+        total,
+        if total == 1 { "" } else { "s" },
+        if total == 1 { "ies" } else { "y" },
     );
     for rule in &rules {
         text.push_str(&describe(rule));
+    }
+    if !personal.is_empty() {
+        // After the project's own rules, which win where the two disagree.
+        text.push_str(
+            "\nPersonal preferences (the user's own, across projects; this project's rules come first):\n",
+        );
+        for rule in &personal {
+            text.push_str(&describe(rule).replacen("\n- [", "\n- (personal) [", 1));
+        }
     }
     Ok(text)
 }
@@ -190,9 +208,20 @@ fn record(arguments: &Value, store: &RuleStore) -> ToolResult {
     let anti = optional_str(arguments, "anti_pattern")?.map(|s| scrub(&s, lang));
     let preferred = optional_str(arguments, "preferred_pattern")?.map(|s| scrub(&s, lang));
 
+    let global = match arguments.get("global") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(global)) => *global,
+        Some(_) => return Err("`global` must be true or false.".to_string()),
+    };
+
     let observation = Observation::new(category, scope, RuleSource::McpFeedback, instruction)
         .with_patterns(anti, preferred);
     let outcome = store.record_observation(observation).map_err(failed)?;
+    let personal = if global {
+        make_personal(&outcome, store)?
+    } else {
+        String::new()
+    };
     let summary = match &outcome {
         Outcome::Promoted(rule) => format!(
             "Recorded \"{}\" as rule {} (scope {}, confidence {:.2}).",
@@ -216,7 +245,37 @@ fn record(arguments: &Value, store: &RuleStore) -> ToolResult {
         }
     };
     let report = store.sync().map_err(failed)?;
-    Ok(format!("{summary}\n{}", describe_sync(&report, store)))
+    Ok(format!(
+        "{summary}{personal}\n{}",
+        describe_sync(&report, store)
+    ))
+}
+
+/// Keep the rule `outcome` confirmed as one of the user's personal rules,
+/// without its snippets, which are this project's code.
+fn make_personal(outcome: &Outcome, store: &RuleStore) -> Result<String, String> {
+    let id = match outcome {
+        Outcome::Promoted(rule) => rule.id.clone(),
+        Outcome::AlreadyConfirmed { id, .. } => id.clone(),
+        _ => return Ok(" It is not confirmed yet, so it was not made personal.".to_string()),
+    };
+    let Some(global) = store.global() else {
+        return Ok(
+            " Personal rules are unavailable here (no home directory), so it was \
+            kept for this project only."
+                .to_string(),
+        );
+    };
+    let rules = store.rules().map_err(failed)?;
+    let Some(rule) = rules.find(&id) else {
+        return Ok(String::new());
+    };
+    global
+        .add(rule, false, &store.paths().project_root)
+        .map_err(failed)?;
+    Ok(format!(
+        " It is also one of the user's personal rules now ({id})."
+    ))
 }
 
 fn reject(arguments: &Value, store: &RuleStore) -> ToolResult {
