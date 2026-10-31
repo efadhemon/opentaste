@@ -1,6 +1,6 @@
 # Phase 11: Cross-project rules (`~/.taste/global.db`)
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -127,11 +127,26 @@ read it and approved or changed it, and this section records the decision.
 - [x] Step 1's design approved and recorded.
 - [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` clean (482 tests).
-- [ ] **Manual gate:** two real projects on one machine; a rule added as
+- [x] **Manual gate:** two real projects on one machine; a rule added as
       personal in one is served in the other through MCP and the user-level
       file, and never appears in either project's git diff.
-- [ ] The website gains a page on personal rules (phase 13 checks this).
+      Run on 2026-10-31 with a release build and a scratch `TASTE_HOME`
+      holding a `.claude` directory with the user's own `CLAUDE.md`, on clones
+      of create-t3-turbo and full-stack-fastapi-template. In create-t3-turbo,
+      `taste global add style-early-return-guard-clauses-nested-19d26d`. In
+      the FastAPI template, `taste status` listed it under "Personal rules
+      served here (1)", and `get_coding_taste` for `frontend/src/main.tsx`
+      returned it as `(personal)` after the project's rules. The user-level
+      `CLAUDE.md` gained the "Personal Coding Preferences" block below the
+      user's notes, untouched. Neither project's `CLAUDE.md`, `AGENTS.md`,
+      `.windsurfrules` or Copilot file mentions it, and each `git diff` is
+      only `.gitignore`'s OpenTaste cache entries. The real `~/.taste` was
+      never created.
+- [x] The website gains a page on personal rules (phase 13 checks this).
+      *Handed to phase 13 step 5*, which already lists a page for personal
+      rules: the site lives on the unmerged `feat/website` branch. SPEC.md
+      §4.3 is the source to write it from.
 - [x] AGENTS.md's global row removed; SPEC.md §4.3 says what `global.db`
       holds.
 - [x] V1-AUDIT M6 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] Status at the top of this file set to `completed`.
