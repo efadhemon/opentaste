@@ -6,6 +6,7 @@
 //! writes that could disagree with each other.
 
 pub mod atomic;
+pub mod global;
 pub mod json_store;
 pub mod lock;
 pub mod sqlite_store;
@@ -21,6 +22,7 @@ use crate::models::{
 };
 use crate::scorer::{confidence as scoring, dedup};
 
+pub use global::{GlobalStore, Suggestion};
 pub use json_store::JsonStore;
 pub use lock::TasteLock;
 pub use sqlite_store::{FileSnapshot, SqliteStore};
@@ -143,7 +145,14 @@ pub struct RuleStore {
     paths: Paths,
     json: JsonStore,
     candidates: SqliteStore,
+    /// The developer's personal rules, when attached with
+    /// [`RuleStore::with_global`].
+    global: Option<GlobalStore>,
 }
+
+/// Cache key for a project opting out of personal rules (`taste global off`).
+/// Kept in the project's local cache, never in git.
+const GLOBAL_OFF: &str = "global.off";
 
 impl RuleStore {
     /// Open (creating as needed) the stores for the project at `paths`.
@@ -154,6 +163,7 @@ impl RuleStore {
             paths,
             json,
             candidates,
+            global: None,
         })
     }
 
@@ -167,7 +177,71 @@ impl RuleStore {
             paths,
             json,
             candidates: SqliteStore::open_in_memory()?,
+            global: None,
         })
+    }
+
+    /// Attach the developer's personal rules. From then on every rule this
+    /// project confirms is remembered as seen here, for suggestions, and
+    /// personal rules can be read for its files.
+    pub fn with_global(mut self, global: GlobalStore) -> Self {
+        self.global = Some(global);
+        self
+    }
+
+    /// The attached personal-rule store, if any.
+    pub fn global(&self) -> Option<&GlobalStore> {
+        self.global.as_ref()
+    }
+
+    /// Whether this project has opted out of personal rules.
+    pub fn global_off(&self) -> Result<bool> {
+        Ok(self.candidates.get_meta(GLOBAL_OFF)?.as_deref() == Some("1"))
+    }
+
+    /// Opt this project out of personal rules, or back in.
+    pub fn set_global_off(&self, off: bool) -> Result<()> {
+        self.candidates
+            .set_meta(GLOBAL_OFF, if off { "1" } else { "0" })
+    }
+
+    /// Personal rules served for `file_path`: those whose scope matches it,
+    /// unless the project opted out. A project rule wins: a personal rule this
+    /// project also confirmed is left out (it is already served), and so is
+    /// one whose opposite this project confirmed.
+    pub fn personal_rules_for_file(
+        &self,
+        file_path: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<TasteRule>> {
+        let Some(global) = &self.global else {
+            return Ok(Vec::new());
+        };
+        if self.global_off()? {
+            return Ok(Vec::new());
+        }
+        let normalized = normalize_path(self.paths.relativize(file_path.as_ref()));
+        let project = self.rules()?;
+        let mut served = Vec::new();
+        for rule in global.list()? {
+            if !rule.enabled || !scope_matcher(&rule.scope)?.is_match(&normalized) {
+                continue;
+            }
+            let overruled = project.rules.iter().any(|own| {
+                own.id == rule.id
+                    || normalize_instruction(&own.instruction)
+                        == normalize_instruction(&rule.instruction)
+                    || crate::ast::conflicting_instructions(&rule.instruction)
+                        .into_iter()
+                        .any(|opposite| {
+                            normalize_instruction(opposite)
+                                == normalize_instruction(&own.instruction)
+                        })
+            });
+            if !overruled {
+                served.push(rule);
+            }
+        }
+        Ok(served)
     }
 
     /// Resolved paths for this project.
@@ -471,6 +545,11 @@ impl RuleStore {
         rules.upsert(rule.clone());
         self.json.save(rules)?;
         self.candidates.delete_candidate(&candidate_id)?;
+        if let Some(global) = &self.global {
+            // Only feeds suggestions. A home directory that cannot be written
+            // must not stop a project from learning.
+            let _ = global.record_seen(&rule, &self.paths.project_root);
+        }
         Ok(Outcome::Promoted(Box::new(rule)))
     }
 

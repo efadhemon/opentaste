@@ -1,6 +1,6 @@
 # Phase 11: Cross-project rules (`~/.taste/global.db`)
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -24,6 +24,8 @@ answered in step 1, in writing, before any code.
 
 The proposal below is the starting point. The step is done when the user has
 read it and approved or changed it, and this section records the decision.
+
+**Approved as written by the maintainer on 2026-10-31.**
 
 - **What is global.** Two things, both on the developer's own machine:
   1. *Personal rules* the developer explicitly marks as theirs
@@ -51,13 +53,21 @@ read it and approved or changed it, and this section records the decision.
 
 ## Step 2: Storage
 
-- [ ] `global.db` with the cache schema plus a `personal_rules` table and a
+- [x] `global.db` with the cache schema plus a `personal_rules` table and a
       `seen_in` table (rule id, project path). Opened lazily; a missing home
-      directory is a clear error, never a crash.
-- [ ] `RuleStore` gains read access to personal rules and keeps the project
+      directory is a clear error, never a crash. (`storage/global.rs`. The
+      cache's own tables are left out: candidates, snapshots and learned
+      changes are always about one project, so global.db holds only its two
+      tables. The home directory is `$TASTE_HOME` when set, so tests never
+      touch the real one, and `Error::HomeDirNotFound` otherwise.)
+- [x] `RuleStore` gains read access to personal rules and keeps the project
       lock rules: global writes take their own lock in `~/.taste/`.
-- [ ] Tests: schema creation and migration; concurrent writes from two
-      projects serialise.
+      (`RuleStore::with_global`, `personal_rules_for_file`,
+      `set_global_off`. Every promotion records a sighting; a home that
+      cannot be written never stops a project learning.)
+- [x] Tests: schema creation and migration; concurrent writes from two
+      projects serialise. (Also suggestions, snippets, precedence and
+      opting out, in `storage/global.rs` and `tests/global.rs`.)
 
 ## Step 3: Commands and MCP
 
