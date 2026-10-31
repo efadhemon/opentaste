@@ -20,10 +20,17 @@ use crate::tui::highlight;
 const BAR_WIDTH: usize = 5;
 
 pub fn draw(frame: &mut Frame, app: &App, glyphs: &Glyphs) {
+    let area = frame.area();
+    let bottom = status_lines(app, usize::from(area.width));
+    // The bar grows to fit a narrow terminal, but never squeezes the panes
+    // below five rows.
+    let height = (bottom.len() as u16)
+        .min(area.height.saturating_sub(5))
+        .max(1);
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(2)])
-        .split(frame.area());
+        .constraints([Constraint::Min(5), Constraint::Length(height)])
+        .split(area);
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
@@ -31,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &App, glyphs: &Glyphs) {
 
     draw_list(frame, panes[0], app, glyphs);
     draw_detail(frame, panes[1], app);
-    draw_status(frame, rows[1], app);
+    frame.render_widget(Paragraph::new(bottom), rows[1]);
 }
 
 pub fn confidence_bar(confidence: f32, glyphs: &Glyphs) -> String {
@@ -259,7 +266,11 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
 pub const KEYS: &str =
     "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [g] Personal | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
 
-fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
+/// The key bar and the status message, as the lines a terminal `width`
+/// columns wide shows. Keys are wrapped between entries, never inside one, so
+/// a narrow terminal shows every key on more lines instead of cutting the
+/// last ones off; the message wraps between words.
+fn status_lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let keys = match &app.mode {
         Mode::ConfirmDelete(_) => "[y] Delete | any other key cancels".to_string(),
         Mode::Edit(_) => {
@@ -269,15 +280,48 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
         Mode::Normal => KEYS.to_string(),
     };
     let status_style = if matches!(app.mode, Mode::ConfirmDelete(_)) {
-        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(highlight::AVOID)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(highlight::STATUS)
     };
-    let bar = Paragraph::new(vec![
-        Line::styled(keys, Style::default().add_modifier(Modifier::DIM)),
-        Line::styled(app.status.clone(), status_style),
-    ]);
-    frame.render_widget(bar, area);
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let mut lines: Vec<Line<'static>> = wrap(keys.split(" | "), " | ", width)
+        .into_iter()
+        .map(|line| Line::styled(line, dim))
+        .collect();
+    if !app.status.is_empty() {
+        lines.extend(
+            wrap(app.status.split_whitespace(), " ", width)
+                .into_iter()
+                .map(|line| Line::styled(line, status_style)),
+        );
+    }
+    lines
+}
+
+/// `items` joined by `separator` into lines of at most `width` columns,
+/// breaking only between items. An item wider than a line gets one to itself.
+fn wrap<'a>(items: impl Iterator<Item = &'a str>, separator: &str, width: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for item in items {
+        let joined = current.chars().count() + separator.chars().count() + item.chars().count();
+        if current.is_empty() {
+            current = item.to_string();
+        } else if joined <= width {
+            current.push_str(separator);
+            current.push_str(item);
+        } else {
+            lines.push(std::mem::take(&mut current));
+            current = item.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -292,7 +336,11 @@ mod tests {
     use taste_core::{Observation, RuleCategory, RuleStore};
 
     fn screen(app: &App, glyphs: &Glyphs) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(140, 24)).unwrap();
+        screen_sized(app, glyphs, 140, 24)
+    }
+
+    fn screen_sized(app: &App, glyphs: &Glyphs, width: u16, height: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| draw(frame, app, glyphs)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         let mut text = String::new();
@@ -386,5 +434,47 @@ mod tests {
         );
         assert!(text.contains("[Enter] Save and sync"), "{text}");
         assert!(screen(&App::load(&store).unwrap(), &UNICODE).contains("[e] Edit"));
+    }
+
+    #[test]
+    fn keys_wrap_between_entries_and_every_line_fits() {
+        let lines = wrap(KEYS.split(" | "), " | ", 40);
+        assert!(lines.len() > 1);
+        for line in &lines {
+            assert!(line.chars().count() <= 40, "{line:?}");
+            assert!(!line.starts_with(" |") && !line.ends_with("| "), "{line:?}");
+        }
+        let rejoined = lines.join(" | ");
+        assert_eq!(rejoined, KEYS, "nothing is lost or reordered");
+        assert_eq!(wrap(KEYS.split(" | "), " | ", 1000), vec![KEYS.to_string()]);
+        assert_eq!(
+            wrap(["a-very-long-entry", "b"].into_iter(), " | ", 5),
+            vec!["a-very-long-entry".to_string(), "b".to_string()],
+            "an entry wider than the line gets one to itself"
+        );
+    }
+
+    #[test]
+    fn a_narrow_terminal_still_shows_every_key_and_the_whole_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RuleStore::open_ephemeral(Paths::for_root(dir.path())).unwrap();
+        store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "**/*.ts",
+                RuleSource::Manual,
+                "Prefer interface for object types.",
+            ))
+            .unwrap();
+        let mut app = App::load(&store).unwrap();
+        let narrow = screen_sized(&app, &UNICODE, 60, 24);
+        for key in KEYS.split(" | ") {
+            assert!(narrow.contains(key), "{key:?} is cut off:\n{narrow}");
+        }
+
+        app.on_key(Key::Char('d'), &store);
+        let confirming = screen_sized(&app, &ASCII, 60, 24);
+        let flat: String = confirming.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("anything else cancels."), "{confirming}");
     }
 }

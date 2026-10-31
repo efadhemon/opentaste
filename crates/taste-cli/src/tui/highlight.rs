@@ -38,6 +38,9 @@ const NUMBER: Color = Color::Indexed(31);
 const COMMENT: Color = Color::Indexed(66);
 const TYPE: Color = Color::Indexed(99);
 const ATTRIBUTE: Color = Color::Indexed(133);
+/// The dashboard's status message: a mid-tone yellow, where the theme's own
+/// yellow is near invisible on white.
+pub const STATUS: Color = Color::Indexed(100);
 /// The avoid and prefer boxes' borders and titles.
 pub const AVOID: Color = Color::Indexed(167);
 pub const PREFER: Color = Color::Indexed(64);
@@ -240,7 +243,9 @@ mod tests {
 
     #[test]
     fn every_fixed_colour_is_readable_on_a_dark_and_a_light_background() {
-        for colour in [STRING, NUMBER, COMMENT, TYPE, ATTRIBUTE, AVOID, PREFER] {
+        for colour in [
+            STRING, NUMBER, COMMENT, TYPE, ATTRIBUTE, AVOID, PREFER, STATUS,
+        ] {
             let Color::Indexed(index) = colour else {
                 panic!("{colour:?} is not a fixed colour");
             };
