@@ -1,6 +1,6 @@
 # Phase 10: Learning from recent git history
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -114,7 +114,7 @@ change counted once.
 `taste init` and `taste scan --history 200` on the three full clones above.
 History produced **no confirmed rule** and one candidate:
 
-| Repository | Candidate | Sightings | Agent | Evidence |
+| Repository | Candidate | Sightings | Verdict | Evidence |
 | --- | --- | --- | --- | --- |
 | create-t3-turbo | `packages/ui/**/*.tsx`: prefer `function` declarations | 3 (65%) | yes | HEAD `packages/ui` is 31 declarations to 9 arrows; `shadcn React 19` (#1243), `bump expo to v54` (#1413) and `migrate to <Field />` (#1433) converted components to declarations |
 
@@ -123,7 +123,7 @@ Before the gate's two fixes the same run left "prefer arrow functions" ahead
 gave no corrections from history: their human commits contain none of the
 swaps the detectors know.
 
-*Awaiting the maintainer's yes/no on the candidate above.*
+The maintainer answered yes on 2026-10-31.
 
 ---
 
@@ -131,10 +131,10 @@ swaps the detectors know.
 
 - [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
       warnings` and `cargo test --workspace` clean (463 tests).
-- [ ] **Manual gate:** run `taste init` on two real repositories with long
+- [x] **Manual gate:** run `taste init` on two real repositories with long
       histories, and agree with every rule that history produced. Record
       them here.
 - [x] The speed target met and recorded.
 - [x] AGENTS.md's history row removed; SPEC.md §1 describes the window.
 - [x] V1-AUDIT M1 and W13 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+- [x] Status at the top of this file set to `completed`.
