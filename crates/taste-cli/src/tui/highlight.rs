@@ -26,19 +26,33 @@ const NAMES: &[&str] = &[
     "attribute",
 ];
 
+/// Mid-tone colours from the fixed 256-colour cube, readable on dark and
+/// light backgrounds alike. The ANSI yellow, cyan and blue the first version
+/// used come from the terminal's theme, and in common palettes yellow on
+/// white or blue on black falls below a 2:1 contrast. Each of these keeps at
+/// least 3.5:1 against black, white, `#1e1e1e` and both Solarized
+/// backgrounds; keywords and function names keep the theme's magenta and
+/// light blue, which hold up in both.
+const STRING: Color = Color::Indexed(100);
+const NUMBER: Color = Color::Indexed(31);
+const COMMENT: Color = Color::Indexed(66);
+const TYPE: Color = Color::Indexed(99);
+const ATTRIBUTE: Color = Color::Indexed(133);
+/// The avoid and prefer boxes' borders and titles.
+pub const AVOID: Color = Color::Indexed(167);
+pub const PREFER: Color = Color::Indexed(64);
+
 fn style_of(index: usize) -> Style {
     match NAMES.get(index) {
         Some(&"keyword") => Style::default()
             .fg(Color::Magenta)
             .add_modifier(Modifier::BOLD),
-        Some(&"string") => Style::default().fg(Color::Yellow),
-        Some(&"comment") => Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::ITALIC),
-        Some(&"number" | &"constant") => Style::default().fg(Color::Cyan),
-        Some(&"type") => Style::default().fg(Color::Blue),
+        Some(&"string") => Style::default().fg(STRING),
+        Some(&"comment") => Style::default().fg(COMMENT).add_modifier(Modifier::ITALIC),
+        Some(&"number" | &"constant") => Style::default().fg(NUMBER),
+        Some(&"type") => Style::default().fg(TYPE),
         Some(&"function") => Style::default().fg(Color::LightBlue),
-        Some(&"attribute") => Style::default().fg(Color::LightMagenta),
+        Some(&"attribute") => Style::default().fg(ATTRIBUTE),
         _ => Style::default(),
     }
 }
@@ -199,6 +213,47 @@ mod tests {
 
         let fallback = snippet_lines("x = 1", "**/*", true, Color::Green);
         assert_eq!(fallback[0].style, Style::default().fg(Color::Green));
+    }
+
+    /// The xterm 256-colour cube's RGB for an index from 16 to 231.
+    fn cube(index: u8) -> [f64; 3] {
+        let levels = [0.0, 95.0, 135.0, 175.0, 215.0, 255.0];
+        let i = usize::from(index - 16);
+        [levels[i / 36], levels[(i / 6) % 6], levels[i % 6]]
+    }
+
+    fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
+        let luminance = |rgb: [f64; 3]| {
+            let lin = |c: f64| {
+                let c = c / 255.0;
+                if c <= 0.03928 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
+        };
+        let (x, y) = (luminance(a) + 0.05, luminance(b) + 0.05);
+        x.max(y) / x.min(y)
+    }
+
+    #[test]
+    fn every_fixed_colour_is_readable_on_a_dark_and_a_light_background() {
+        for colour in [STRING, NUMBER, COMMENT, TYPE, ATTRIBUTE, AVOID, PREFER] {
+            let Color::Indexed(index) = colour else {
+                panic!("{colour:?} is not a fixed colour");
+            };
+            for background in [
+                [0.0; 3],
+                [255.0; 3],
+                [30.0, 30.0, 30.0],
+                [253.0, 246.0, 227.0],
+            ] {
+                let ratio = contrast(cube(index), background);
+                assert!(ratio >= 3.3, "{colour:?} on {background:?}: {ratio:.2}");
+            }
+        }
     }
 
     #[test]

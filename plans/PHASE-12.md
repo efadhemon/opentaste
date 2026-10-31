@@ -1,6 +1,6 @@
 # Phase 12: Dashboard editing, highlighting and scan speed
 
-**Status:** ongoing
+**Status:** completed
 
 | | |
 | --- | --- |
@@ -135,11 +135,36 @@ read-and-hash loop are serial; 991 files took 321 ms in a release build.
 
 ## Definition of done
 
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-      warnings` and `cargo test --workspace` clean.
-- [ ] **Manual gate:** edit a rule in `taste ui` in a real terminal and see
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean (501 tests).
+- [x] **Manual gate:** edit a rule in `taste ui` in a real terminal and see
       the change in `CLAUDE.md`; check highlighting in a dark and a light
       terminal theme.
-- [ ] The benchmark numbers recorded here and in SPEC.md §1.
-- [ ] V1-AUDIT M7, M8 and M9 marked fixed.
-- [ ] Status at the top of this file set to `completed`.
+      Simulated on 2026-11-01 at the maintainer's request: `taste ui` (release
+      build) run in a pseudo-terminal (140×32, `TERM=xterm-256color`) driven
+      by a script that sends keys and reads back what the terminal drew, on a
+      demo project with a scratch `TASTE_HOME`.
+      - *Edit:* `[e]` on the path-alias rule, " Always." appended, `Tab`,
+        scope replaced with `src/**/*.ts`, `Enter`: "Saved … editor files
+        updated", and `CLAUDE.md` and `rules.json` show the new wording and
+        scope under the same id. A scope of `src/**/*.ts[` showed "is not a
+        valid scope glob; nothing was saved" and kept the edit open; `Esc`
+        cancelled; neither file changed.
+      - *Highlighting:* the terminal received bold magenta for `function`,
+        `const` and `return`, light blue for function names, the string
+        colour for `"start"`, and the avoid/prefer colours on the box
+        borders and titles. With `NO_COLOR=1` it received no foreground
+        colour at all.
+      - *Dark and light themes,* checked by contrast, not by eye. Contrast
+        ratios against common palettes (xterm, GNOME/Tango, VS Code) found the
+        first version's ANSI yellow strings at 1.4–1.7:1 on white, blue types
+        at 2.0–2.2:1 on black, and gray comments under 3:1 on dark
+        backgrounds. Strings, numbers, comments, types, decorators and the box
+        borders now use fixed mid-tone 256-colour entries that stay at or
+        above 3.4:1 on black, white, `#1e1e1e` and both Solarized backgrounds
+        (a test enforces at least 3.3:1); keywords and function names keep
+        the theme's magenta and light blue, at least 3.4:1 in all three
+        palettes.
+- [x] The benchmark numbers recorded here and in SPEC.md §1.
+- [x] V1-AUDIT M7, M8 and M9 marked fixed.
+- [x] Status at the top of this file set to `completed`.

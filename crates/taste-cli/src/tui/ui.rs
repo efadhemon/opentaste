@@ -210,11 +210,15 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     // syntax.
     let colours = highlight::colours_enabled();
     let snippets: Vec<(&str, &str, Color)> = [
-        ("Anti-Pattern (Avoid)", entry.anti_pattern(), Color::Red),
+        (
+            "Anti-Pattern (Avoid)",
+            entry.anti_pattern(),
+            highlight::AVOID,
+        ),
         (
             "Preferred-Pattern (Use)",
             entry.preferred_pattern(),
-            Color::Green,
+            highlight::PREFER,
         ),
     ]
     .into_iter()
