@@ -19,7 +19,7 @@ phase reference to **Shipped**.
 | Three loops: scan, delta learner, MCP | **Shipped**: `ast/scan.rs`, `taste learn-delta` + extension, `taste-mcp` |
 | Scanner reads "recent Git history" | **Shipped** (phase 10): `taste scan --history N`, and `taste init` with a 200-commit / 180-day window; `taste-cli/src/commands/history.rs` |
 | tree-sitter + rayon | **Shipped**: `ast/parser.rs`, `par_iter` in `ast/scan.rs` |
-| Scan timings and "<300ms" | **Shipped** (phase 12 step 3): 1,000 files cold in 282–294 ms on four cores, measured by `taste-core/tests/scan_bench.rs`; SPEC.md §1 states the measured numbers |
+| Scan timings and "<300ms" | **Shipped** (phase 12 step 3): 1,000 files cold in about 300 ms on four cores (263–310 ms across runs), measured by `taste-core/tests/scan_bench.rs`; SPEC.md §1 states the measured numbers |
 | Rules at ≥ 0.80 are synced to the five targets | **Shipped**: `TasteRule::is_active`, `transpiler/` |
 
 ## §2: directory structure
@@ -27,7 +27,7 @@ phase reference to **Shipped**.
 | Claim | Status |
 | --- | --- |
 | `config.rs` paths for `rules.json`, `cache.db` | **Shipped** |
-| `config.rs` / `sqlite_store.rs`: `~/.taste/global.db` | Phase 11 (M6) |
+| `config.rs` / `sqlite_store.rs`: `~/.taste/global.db` | **Shipped** (phase 11): `storage/global.rs`, `taste global`, personal rules over MCP and in user-level files |
 | `models.rs` types | **Shipped** |
 | `parser.rs`: TS/JS, Python, Rust, Go | **Shipped**: parsing, and analyzers and detectors for all four (phase 8, `ast/analyzers/{python,rust,go}.rs`, `diff/{python,rust,go}.rs`) |
 | `imports.rs`: alias vs relative, named vs default | **Shipped**; barrel exports fixed in phase 7 |
@@ -69,7 +69,7 @@ phase reference to **Shipped**.
 | `detected_stack` like `typescript, nestjs, react, postgresql` | **Shipped** in phase 7 step 5 |
 | `RuleCategory`, `RuleSource`, `TasteRule`, `RulesFile`, `ProjectContext` | **Shipped** |
 | SQLite `candidate_rules`, `file_snapshots` | **Shipped** (plus `rejected_rules`, `learned_changes`, `pending_deltas`) |
-| Same schema for `global.db` | Phase 11 step 2 |
+| Same schema for `global.db` | **Changed** (phase 11 step 2): `global.db` holds personal rules and sightings only; candidates and snapshots are per project. SPEC.md §4.3 says so |
 
 ## §5: core engine
 

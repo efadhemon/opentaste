@@ -27,7 +27,7 @@ before it is reliable.
 | M3 | `types.rs`: **strict null checks** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 1.** |
 | M4 | `types.rs`: **zod schemas** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 2.** |
 | M5 | `arch.rs`: **DI patterns** | Not detected | `ast/analyzers/arch.rs` **Fixed in phase 9 step 3.** |
-| M6 | **`~/.taste/global.db`**, cross-project rules (§2, §4.3) | `Paths::global_db()` exists; nothing reads or writes the file | `config.rs:90` |
+| M6 | **`~/.taste/global.db`**, cross-project rules (§2, §4.3) | `Paths::global_db()` exists; nothing reads or writes the file | `config.rs:90` **Fixed in phase 11.** |
 | M7 | Terminal dashboard can **edit** a rule (§2 `app.rs`: "toggle, edit, delete") | Toggle, promote, delete, sync, filter. No edit. | `tui/app.rs` **Fixed in phase 12 step 1.** |
 | M8 | Dashboard shows a **syntax-highlighted** avoid/prefer diff box (§8) | Red/green colouring, no syntax highlighting | `tui/ui.rs` **Fixed in phase 12 step 2.** |
 | M9 | Scanner walks with **`ignore::WalkParallel`** and meets **<300 ms** (§1, §8) | Serial `WalkBuilder` walk; only parsing is parallel. 991 files took 321 ms in release. | `ast/scan.rs:65` **Fixed in phase 12 step 3.** |

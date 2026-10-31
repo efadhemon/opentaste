@@ -55,6 +55,25 @@ pub fn run(store: &RuleStore, out: &Output) -> anyhow::Result<()> {
         out.say(candidate_line(candidate, &glyph));
     }
 
+    if store.global().is_some() {
+        out.say("");
+        let personal = store.personal_rules_served()?;
+        if store.global_off()? {
+            out.say("Personal rules: off in this project (`taste global on` serves them again)");
+        } else {
+            out.say(format!("Personal rules served here ({})", personal.len()));
+            if personal.is_empty() {
+                out.say("  none; `taste global suggest` lists rules you could make personal");
+            }
+            for rule in &personal {
+                out.say(format!(
+                    "  (personal) {}  {}  {}",
+                    rule.id, rule.scope, rule.instruction
+                ));
+            }
+        }
+    }
+
     out.say("");
     out.say("Scan counts (why a rule was or was not inferred)");
     let tally = stored_tally(store)?;

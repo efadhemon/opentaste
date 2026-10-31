@@ -75,6 +75,29 @@ pub fn sync_all(paths: &Paths, rules: &[TasteRule]) -> Result<SyncReport> {
     Ok(report)
 }
 
+/// Write personal `rules` into the user-level instruction files under `home`
+/// ([`Paths::user_targets`]), with the same marker splicing as project files.
+/// An editor whose directory does not exist is skipped, and with no personal
+/// rules each block is withdrawn. Project files are never touched here.
+pub fn sync_personal(home: &std::path::Path, rules: &[TasteRule]) -> Result<SyncReport> {
+    let enabled: Vec<TasteRule> = rules.iter().filter(|r| r.enabled).cloned().collect();
+    let mut report = SyncReport::default();
+    for (editor_dir, path) in Paths::user_targets(home) {
+        if !editor_dir.is_dir() {
+            continue;
+        }
+        if enabled.is_empty() {
+            if marker::clear_block(&path)? {
+                report.removed.push(path);
+            }
+            continue;
+        }
+        let changed = marker::write_block(&path, &render::personal_sections(&enabled))?;
+        report.record(path, changed);
+    }
+    Ok(report)
+}
+
 /// What [`sync_all`] would do with `rules`, without writing anything.
 ///
 /// `written` lists the targets that are stale (a sync would rewrite them),

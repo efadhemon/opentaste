@@ -61,7 +61,9 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App, glyphs: &Glyphs) {
     let items: Vec<ListItem> = app
         .visible()
         .map(|entry| {
-            let mark = if entry.is_candidate() {
+            let mark = if entry.is_personal_row() {
+                glyphs.personal
+            } else if entry.is_candidate() {
                 glyphs.candidate
             } else if entry.is_enabled() {
                 glyphs.confirmed
@@ -84,6 +86,14 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App, glyphs: &Glyphs) {
                     Style::default().fg(category_colour(entry)),
                 ),
                 Span::styled(entry.instruction().to_string(), dim),
+                Span::styled(
+                    if app.is_personal(entry.id()) {
+                        "  (personal)"
+                    } else {
+                        ""
+                    },
+                    Style::default().add_modifier(Modifier::ITALIC),
+                ),
             ]))
         })
         .collect();
@@ -158,7 +168,11 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let label = Style::default().add_modifier(Modifier::BOLD);
-    let state = if entry.is_candidate() {
+    let state = if entry.is_personal_row() {
+        "personal, from another project (served where its scope matches)"
+    } else if app.is_personal(entry.id()) {
+        "confirmed here, and personal"
+    } else if entry.is_candidate() {
         "candidate (not applied to editors)"
     } else if entry.is_enabled() {
         "confirmed, enabled"
@@ -239,7 +253,7 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 pub const KEYS: &str =
-    "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
+    "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [g] Personal | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let keys = match &app.mode {

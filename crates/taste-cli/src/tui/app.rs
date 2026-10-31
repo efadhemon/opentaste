@@ -104,68 +104,70 @@ impl EditState {
 pub enum Entry {
     Confirmed(TasteRule),
     Candidate(CandidateRule),
+    /// A personal rule this project does not have itself.
+    Personal(TasteRule),
 }
 
 impl Entry {
     pub fn id(&self) -> &str {
         match self {
-            Entry::Confirmed(rule) => &rule.id,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => &rule.id,
             Entry::Candidate(candidate) => &candidate.id,
         }
     }
 
     pub fn category(&self) -> RuleCategory {
         match self {
-            Entry::Confirmed(rule) => rule.category,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.category,
             Entry::Candidate(candidate) => candidate.category,
         }
     }
 
     pub fn scope(&self) -> &str {
         match self {
-            Entry::Confirmed(rule) => &rule.scope,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => &rule.scope,
             Entry::Candidate(candidate) => &candidate.scope,
         }
     }
 
     pub fn confidence(&self) -> f32 {
         match self {
-            Entry::Confirmed(rule) => rule.confidence,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.confidence,
             Entry::Candidate(candidate) => candidate.confidence,
         }
     }
 
     pub fn occurrences(&self) -> u32 {
         match self {
-            Entry::Confirmed(rule) => rule.occurrences,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.occurrences,
             Entry::Candidate(candidate) => candidate.occurrences,
         }
     }
 
     pub fn instruction(&self) -> &str {
         match self {
-            Entry::Confirmed(rule) => &rule.instruction,
+            Entry::Confirmed(rule) | Entry::Personal(rule) => &rule.instruction,
             Entry::Candidate(candidate) => &candidate.instruction,
         }
     }
 
     pub fn anti_pattern(&self) -> Option<&str> {
         match self {
-            Entry::Confirmed(rule) => rule.anti_pattern.as_deref(),
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.anti_pattern.as_deref(),
             Entry::Candidate(candidate) => candidate.anti_pattern.as_deref(),
         }
     }
 
     pub fn preferred_pattern(&self) -> Option<&str> {
         match self {
-            Entry::Confirmed(rule) => rule.preferred_pattern.as_deref(),
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.preferred_pattern.as_deref(),
             Entry::Candidate(candidate) => candidate.preferred_pattern.as_deref(),
         }
     }
 
     pub fn source(&self) -> &'static str {
         match self {
-            Entry::Confirmed(rule) => rule.source.slug(),
+            Entry::Confirmed(rule) | Entry::Personal(rule) => rule.source.slug(),
             Entry::Candidate(candidate) => candidate.source.slug(),
         }
     }
@@ -174,9 +176,13 @@ impl Entry {
         matches!(self, Entry::Candidate(_))
     }
 
-    /// Enabled, for a confirmed rule. Candidates are never applied.
+    /// Enabled, for a confirmed or personal rule. Candidates are never applied.
     pub fn is_enabled(&self) -> bool {
-        matches!(self, Entry::Confirmed(rule) if rule.enabled)
+        matches!(self, Entry::Confirmed(rule) | Entry::Personal(rule) if rule.enabled)
+    }
+
+    pub fn is_personal_row(&self) -> bool {
+        matches!(self, Entry::Personal(_))
     }
 
     fn matches(&self, filter: &str) -> bool {
@@ -214,6 +220,8 @@ pub struct App {
     pub mode: Mode,
     pub status: String,
     pub quit: bool,
+    /// Ids of the developer's personal rules, for the badge.
+    personal: std::collections::HashSet<String>,
 }
 
 impl App {
@@ -226,6 +234,7 @@ impl App {
             mode: Mode::Normal,
             status: String::new(),
             quit: false,
+            personal: std::collections::HashSet::new(),
         };
         app.reload(store)?;
         if app.entries.is_empty() {
@@ -239,12 +248,23 @@ impl App {
     /// still exists.
     pub fn reload(&mut self, store: &RuleStore) -> anyhow::Result<()> {
         let keep = self.selected().map(|entry| entry.id().to_string());
-        self.entries = store
-            .rules()?
-            .rules
+        let rules = store.rules()?.rules;
+        let personal = match store.global() {
+            Some(global) => global.list()?,
+            None => Vec::new(),
+        };
+        self.personal = personal.iter().map(|rule| rule.id.clone()).collect();
+        // A personal rule this project also has is one row, badged; one from
+        // elsewhere gets a row of its own after the candidates.
+        let elsewhere: Vec<TasteRule> = personal
+            .into_iter()
+            .filter(|rule| rules.iter().all(|own| own.id != rule.id))
+            .collect();
+        self.entries = rules
             .into_iter()
             .map(Entry::Confirmed)
             .chain(store.candidate_rules()?.into_iter().map(Entry::Candidate))
+            .chain(elsewhere.into_iter().map(Entry::Personal))
             .collect();
         self.refilter(keep.as_deref());
         Ok(())
@@ -282,13 +302,19 @@ impl App {
             .map(|index| &self.entries[*index])
     }
 
+    /// Confirmed rules and candidates of this project; personal rows from
+    /// elsewhere count for neither.
     pub fn counts(&self) -> (usize, usize) {
-        let candidates = self
-            .entries
-            .iter()
-            .filter(|entry| entry.is_candidate())
-            .count();
-        (self.entries.len() - candidates, candidates)
+        let count = |wanted: fn(&Entry) -> bool| self.entries.iter().filter(|e| wanted(e)).count();
+        (
+            count(|entry| matches!(entry, Entry::Confirmed(_))),
+            count(Entry::is_candidate),
+        )
+    }
+
+    /// Whether the rule with `id` is one of the developer's personal rules.
+    pub fn is_personal(&self, id: &str) -> bool {
+        self.personal.contains(id)
     }
 
     /// Apply one key. Store failures become a status message rather than
@@ -370,6 +396,14 @@ impl App {
             }
             Key::Char(' ') => self.toggle(store)?,
             Key::Char('p') => self.promote(store)?,
+            Key::Char('g') => self.personal(store)?,
+            Key::Char('e') | Key::Char('d')
+                if self.selected().is_some_and(Entry::is_personal_row) =>
+            {
+                self.status =
+                    "A personal rule belongs to the project it came from; [g] stops it being personal."
+                        .to_string();
+            }
             Key::Char('e') => {
                 if let Some(entry) = self.selected() {
                     let instruction = entry.instruction().to_string();
@@ -441,6 +475,15 @@ impl App {
             return Ok(());
         }
         self.mode = Mode::Normal;
+        // A personal rule follows its edit, keeping its snippets if it had them.
+        if let (true, Some(global)) = (self.is_personal(&state.id), store.global()) {
+            if let Some(edited) = store.rules()?.find(&state.id) {
+                let kept = global.get(&state.id)?.is_some_and(|old| {
+                    old.anti_pattern.is_some() || old.preferred_pattern.is_some()
+                });
+                global.add(edited, kept, &store.paths().project_root)?;
+            }
+        }
         let report = store.sync()?;
         self.status = format!(
             "Saved {}; {} editor file{} updated.",
@@ -451,10 +494,46 @@ impl App {
         self.reload(store)
     }
 
+    /// `[g]`: make a confirmed rule personal, or stop a personal one being
+    /// personal, then sync the user-level files.
+    fn personal(&mut self, store: &RuleStore) -> anyhow::Result<()> {
+        let Some(entry) = self.selected().cloned() else {
+            return Ok(());
+        };
+        let Some(global) = store.global() else {
+            self.status = "Personal rules are unavailable: no usable home directory.".to_string();
+            return Ok(());
+        };
+        let id = entry.id().to_string();
+        self.status = match entry {
+            Entry::Candidate(_) => "Confirm a candidate before making it personal.".to_string(),
+            Entry::Personal(_) => {
+                global.remove(&id)?;
+                format!("{id} is no longer personal.")
+            }
+            Entry::Confirmed(rule) if self.is_personal(&id) => {
+                global.remove(&rule.id)?;
+                format!("{id} is no longer personal; it stays a rule of this project.")
+            }
+            Entry::Confirmed(rule) => {
+                global.add(&rule, false, &store.paths().project_root)?;
+                format!("{id} is personal now, offered in your other projects.")
+            }
+        };
+        store.sync()?;
+        self.reload(store)
+    }
+
     fn toggle(&mut self, store: &RuleStore) -> anyhow::Result<()> {
         let Some(entry) = self.selected() else {
             return Ok(());
         };
+        if entry.is_personal_row() {
+            self.status =
+                "A personal rule from another project; press [g] to stop it being personal."
+                    .to_string();
+            return Ok(());
+        }
         let Entry::Confirmed(rule) = entry else {
             self.status =
                 "Candidates are not applied to editors yet; press [p] to promote.".to_string();
@@ -473,6 +552,10 @@ impl App {
         let Some(entry) = self.selected() else {
             return Ok(());
         };
+        if entry.is_personal_row() {
+            self.status = "A personal rule is not this project's to promote.".to_string();
+            return Ok(());
+        }
         if !entry.is_candidate() {
             self.status = "Already confirmed.".to_string();
             return Ok(());
@@ -502,6 +585,12 @@ mod tests {
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = RuleStore::open_ephemeral(Paths::for_root(dir.path())).unwrap();
+        seed(&store);
+        Fixture { _dir: dir, store }
+    }
+
+    /// Two confirmed rules and one candidate, into `store`.
+    fn seed(store: &RuleStore) {
         for (category, scope, instruction) in [
             (
                 RuleCategory::Imports,
@@ -537,7 +626,6 @@ mod tests {
                 ),
             )
             .unwrap();
-        Fixture { _dir: dir, store }
     }
 
     fn press(app: &mut App, store: &RuleStore, keys: &[Key]) {
@@ -872,5 +960,132 @@ mod tests {
         press(&mut app, &fx.store, &[Key::Enter]);
         assert!(app.status.contains("would say the same"), "{}", app.status);
         assert_eq!(rule(&fx.store, &id), before);
+    }
+
+    mod personal {
+        use super::*;
+        use taste_core::storage::GlobalStore;
+
+        /// The usual rules, in a store attached to personal rules in `home`.
+        fn attached(home: &std::path::Path) -> (tempfile::TempDir, RuleStore) {
+            let dir = tempfile::tempdir().unwrap();
+            let store = RuleStore::open_ephemeral(Paths::for_root(dir.path()))
+                .unwrap()
+                .with_global(GlobalStore::open(home).unwrap());
+            seed(&store);
+            (dir, store)
+        }
+
+        #[test]
+        fn g_makes_a_confirmed_rule_personal_and_again_takes_it_back() {
+            let home = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(home.path().join(".claude")).unwrap();
+            let (_fx, store) = attached(home.path());
+            let mut app = App::load(&store).unwrap();
+            let id = selected_id(&app);
+            assert!(!app.is_personal(&id));
+
+            press(&mut app, &store, &[Key::Char('g')]);
+            assert!(app.is_personal(&id), "{}", app.status);
+            assert_eq!(app.counts(), (2, 1), "still one row, now badged");
+            let claude = std::fs::read_to_string(home.path().join(".claude/CLAUDE.md")).unwrap();
+            assert!(claude.contains("Personal Coding Preferences"), "{claude}");
+
+            press(&mut app, &store, &[Key::Char('g')]);
+            assert!(!app.is_personal(&id), "{}", app.status);
+            assert!(
+                store.rules().unwrap().find(&id).is_some(),
+                "the project keeps its rule"
+            );
+        }
+
+        #[test]
+        fn a_personal_rule_from_elsewhere_has_its_own_row_and_cannot_be_deleted_here() {
+            let home = tempfile::tempdir().unwrap();
+            let elsewhere = tempfile::tempdir().unwrap();
+            let mut rule = taste_core::CandidateRule::new(
+                RuleCategory::Naming,
+                "**/*",
+                RuleSource::Manual,
+                "Name booleans as questions.",
+            )
+            .into_rule();
+            rule.confidence = 0.95;
+            GlobalStore::open(home.path())
+                .unwrap()
+                .add(&rule, false, elsewhere.path())
+                .unwrap();
+            let (_fx, store) = attached(home.path());
+            let mut app = App::load(&store).unwrap();
+            assert_eq!(app.counts(), (2, 1), "a personal row counts for neither");
+            press(&mut app, &store, &[Key::End]);
+            assert!(app.selected().unwrap().is_personal_row());
+
+            press(&mut app, &store, &[Key::Char('d')]);
+            assert_eq!(
+                app.mode,
+                Mode::Normal,
+                "no delete prompt for a personal row"
+            );
+            assert!(
+                app.status.contains("[g] stops it being personal"),
+                "{}",
+                app.status
+            );
+
+            press(&mut app, &store, &[Key::Char('g')]);
+            assert!(store.global().unwrap().list().unwrap().is_empty());
+            assert!(app.visible().all(|entry| !entry.is_personal_row()));
+        }
+
+        #[test]
+        fn a_candidate_cannot_be_made_personal() {
+            let home = tempfile::tempdir().unwrap();
+            let (_fx, store) = attached(home.path());
+            let mut app = App::load(&store).unwrap();
+            press(&mut app, &store, &[Key::End, Key::Char('g')]);
+            assert!(app.status.contains("Confirm a candidate"), "{}", app.status);
+            assert!(store.global().unwrap().list().unwrap().is_empty());
+        }
+
+        #[test]
+        fn editing_a_personal_rule_updates_its_personal_copy_and_e_is_refused_on_a_row_from_elsewhere(
+        ) {
+            let home = tempfile::tempdir().unwrap();
+            let (_dir, store) = attached(home.path());
+            let mut app = App::load(&store).unwrap();
+            let id = selected_id(&app);
+            press(&mut app, &store, &[Key::Char('g'), Key::Char('e')]);
+            press(&mut app, &store, &typed(" Always."));
+            press(&mut app, &store, &[Key::Enter]);
+            let personal = store.global().unwrap().get(&id).unwrap().unwrap();
+            assert!(
+                personal.instruction.ends_with(" Always."),
+                "{}",
+                personal.instruction
+            );
+
+            let elsewhere = tempfile::tempdir().unwrap();
+            let mut rule = taste_core::CandidateRule::new(
+                RuleCategory::Naming,
+                "**/*",
+                RuleSource::Manual,
+                "Name booleans as questions.",
+            )
+            .into_rule();
+            rule.confidence = 0.95;
+            store
+                .global()
+                .unwrap()
+                .add(&rule, false, elsewhere.path())
+                .unwrap();
+            app.reload(&store).unwrap();
+            press(&mut app, &store, &[Key::End, Key::Char('e')]);
+            assert_eq!(
+                app.mode,
+                Mode::Normal,
+                "a personal row from elsewhere is not edited here"
+            );
+        }
     }
 }

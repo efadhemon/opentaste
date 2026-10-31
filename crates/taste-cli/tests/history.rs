@@ -6,8 +6,16 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// A home directory for every `taste` this test binary runs, so personal
+/// rules are written there and never to the real `~/.taste`.
+fn test_home() -> &'static std::path::Path {
+    static HOME: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| tempfile::tempdir().unwrap()).path()
+}
+
 fn taste(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_taste"))
+        .env("TASTE_HOME", test_home())
         .args(args)
         .current_dir(dir)
         .output()

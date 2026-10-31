@@ -1,5 +1,6 @@
 //! One module per subcommand.
 
+pub mod global;
 pub mod history;
 pub mod init;
 pub mod learn;
@@ -35,6 +36,20 @@ pub fn delta_key(path: &Path, observation: &Observation) -> String {
         bytes.push(0);
     }
     content_hash(&bytes)
+}
+
+/// Attach the developer's personal rules to `store`, so its confirmations are
+/// remembered for suggestions and its files are served personal rules.
+/// Personal rules are an extra: without a usable home directory every project
+/// command still works, and `taste global` says what went wrong.
+pub fn with_personal_rules(store: taste_core::RuleStore) -> taste_core::RuleStore {
+    let global = taste_core::config::Paths::home()
+        .ok()
+        .and_then(|home| taste_core::storage::GlobalStore::open(&home).ok());
+    match global {
+        Some(global) => store.with_global(global),
+        None => store,
+    }
 }
 
 /// Identifies one file's change by its path and both versions, not by commit:

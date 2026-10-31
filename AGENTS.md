@@ -20,7 +20,7 @@ packages/            VS Code extension and the @opentaste/cli npm wrapper (phase
 plans/               one file per phase, with a status you keep current
 ```
 
-Current baseline on `main`: **480 Rust tests and 40 TypeScript tests passing**
+Current baseline on `main`: **500 Rust tests and 40 TypeScript tests passing**
 (`pnpm -r run test`), `cargo clippy --workspace
 --all-targets -- -D warnings` clean, `cargo fmt --all --check` clean. Do not
 regress it.
@@ -208,7 +208,6 @@ build a weak version of one to tick it off.
 
 | Item | Where it appears | Why it is deferred |
 | --- | --- | --- |
-| `~/.taste/global.db`, cross-project rules | SPEC.md sections 2, 4.3; `Paths::global_db()` | The path helper exists and compiles, but nothing reads or writes the file and no phase in PLAN.md claims it. Project-local rules are the whole value proposition; sharing taste across unrelated repositories is a separate feature with its own privacy questions. |
 | A `taste` binary bundled in the extension | [plans/PHASE-6.md](plans/PHASE-6.md) step 3 | The extension finds `taste` from its setting, the workspace's `node_modules/.bin`, then `PATH`. Bundling means one VSIX per platform (`vsce package --target`); downloading one at run time would be the network call the npm wrapper refuses to make. |
 | Control-flow flattening detector | SPEC.md section 5.2, item 5 | Planned last in [plans/PHASE-3.md](plans/PHASE-3.md) and explicitly droppable. It needs real tree-shape comparison and is the detector most likely to be confidently wrong. |
 

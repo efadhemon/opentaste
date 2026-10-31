@@ -75,6 +75,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Your personal rules, served in every project but committed to none.
+    Global {
+        #[command(subcommand)]
+        action: commands::global::Action,
+    },
     /// Stop applying a confirmed rule without deleting it, then sync.
     Disable {
         /// The rule's id, as `taste status` shows it.
@@ -116,6 +121,7 @@ fn run(command: Command, out: &Output) -> anyhow::Result<()> {
         Command::Ui => tui::run(&store),
         Command::Watch => commands::watch::run(&store, out),
         Command::Targets { json } => commands::targets::run(&store, json, out),
+        Command::Global { action } => commands::global::run(&store, action, out),
         Command::Disable { rule_id } => commands::toggle::run(&store, &rule_id, false, out),
         Command::Enable { rule_id } => commands::toggle::run(&store, &rule_id, true, out),
     }
@@ -133,5 +139,5 @@ fn open_store(cwd: &std::path::Path) -> anyhow::Result<RuleStore> {
             paths.project_root.display()
         );
     }
-    Ok(RuleStore::open(paths)?)
+    Ok(commands::with_personal_rules(RuleStore::open(paths)?))
 }

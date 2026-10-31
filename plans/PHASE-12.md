@@ -112,6 +112,13 @@ read-and-hash loop are serial; 991 files took 321 ms in a release build.
 
       Measured 2026-10-31 on a 12-core x86-64 Linux machine restricted to
       four cores. All twelve cores: 451 ms before.
+
+      **The target is met with little margin, and the number moves with
+      machine load.** Re-measured after merging phase 11 into this branch:
+      263–310 ms cold over four runs. At the same moment the pre-merge commit
+      (`98c90f5`) measured 314–332 ms, so the merge did not regress it; the
+      machine was busier. Treat "under 300 ms" as the typical result on four
+      idle cores, not a guarantee.
 - [x] Tests: two scans of the same tree produce byte-identical
       `rules.json`; results equal the serial implementation's on the
       existing fixtures. (Rules and snapshots compared without their
