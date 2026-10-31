@@ -8,6 +8,7 @@
 //! `panic = "abort"` runs the hook before aborting.
 
 pub mod app;
+pub mod highlight;
 pub mod ui;
 
 use anyhow::Context;

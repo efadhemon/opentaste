@@ -14,7 +14,6 @@
 //!   preference; the edit itself is the stable part.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
 
 use tree_sitter::Node;
 
@@ -120,30 +119,13 @@ pub fn is_same_pattern(left: Pattern<'_>, right: Pattern<'_>) -> bool {
 /// `@AutoEntity` never matches `@Index` to `@AutoIndex`. A scope that names no
 /// single language, or a snippet that does not parse cleanly, never matches.
 pub fn same_edit(scope: &str, left: (&str, &str), right: (&str, &str)) -> bool {
-    let Some(lang) = scope_language(scope) else {
+    let Some(lang) = SupportedLanguage::from_scope(scope) else {
         return false;
     };
     match (edit_shape(lang, left), edit_shape(lang, right)) {
         (Some(left), Some(right)) => left == right,
         _ => false,
     }
-}
-
-/// The language every file in `scope` is written in, read from its extension.
-/// `**/*` and a brace list spanning languages name none.
-fn scope_language(scope: &str) -> Option<SupportedLanguage> {
-    let ext = scope.trim().rsplit_once('.')?.1;
-    let exts: Vec<&str> = match ext.strip_prefix('{').and_then(|e| e.strip_suffix('}')) {
-        Some(list) => list.split(',').collect(),
-        None => vec![ext],
-    };
-    let mut langs = exts
-        .iter()
-        .map(|ext| SupportedLanguage::from_path(Path::new(&format!("x.{ext}"))));
-    let first = langs.next()??;
-    langs
-        .all(|lang| lang.is_some_and(|lang| lang.family() == first.family()))
-        .then_some(first)
 }
 
 fn edit_shape(lang: SupportedLanguage, (avoid, prefer): (&str, &str)) -> Option<String> {

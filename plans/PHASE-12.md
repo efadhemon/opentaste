@@ -43,16 +43,25 @@ delete". Everything but edit exists.
 SPEC.md §8: a "syntax-highlighted `Anti-Pattern (Avoid)` vs
 `Preferred-Pattern (Use)` diff box". Today the two snippets are red and green.
 
-- [ ] Highlight with `tree-sitter-highlight` (0.27, matching the workspace's
+- [x] Highlight with `tree-sitter-highlight` (0.27, matching the workspace's
       `tree-sitter`) and each grammar's bundled `HIGHLIGHTS_QUERY`, so no new
-      grammar or highlighter library is added.
-- [ ] The language comes from the rule's scope extension; an unknown one
-      falls back to the current colouring.
-- [ ] Keep the avoid/prefer distinction with the box border and title, now
+      grammar or highlighter library is added. (`tui/highlight.rs`.
+      TypeScript's bundled query only covers what TypeScript adds to
+      JavaScript, and `tree-sitter-javascript` is not a dependency, so
+      `SupportedLanguage::highlights_query` prepends a short query for the
+      shared captures: strings, comments, numbers, keywords, calls. A test
+      compiles every language's query against its grammar.)
+- [x] The language comes from the rule's scope extension; an unknown one
+      falls back to the current colouring. (`SupportedLanguage::from_scope`,
+      shared with deduplication.)
+- [x] Keep the avoid/prefer distinction with the box border and title, now
       that the text itself is coloured by syntax.
-- [ ] Respect `NO_COLOR` and the existing ASCII fallback.
-- [ ] Tests: a TypeScript snippet gets keyword and string styles; an unknown
-      extension falls back; `NO_COLOR` gets no styles.
+- [x] Respect `NO_COLOR` and the existing ASCII fallback. (With `NO_COLOR`
+      the snippets and their borders are plain; the ASCII glyphs are
+      unchanged.)
+- [x] Tests: a TypeScript snippet gets keyword and string styles; an unknown
+      extension falls back; `NO_COLOR` gets no styles. (Also Python, Rust
+      and Go keywords, and the text surviving highlighting unchanged.)
 
 ## Step 3: Parallel walk and the 300 ms target (M9)
 
