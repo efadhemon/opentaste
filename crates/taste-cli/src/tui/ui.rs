@@ -14,7 +14,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wra
 use ratatui::Frame;
 
 use crate::output::Glyphs;
-use crate::tui::app::{App, Entry, Mode};
+use crate::tui::app::{App, EditState, Entry, Field, Mode};
+use crate::tui::highlight;
 
 const BAR_WIDTH: usize = 5;
 
@@ -105,7 +106,51 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App, glyphs: &Glyphs) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// The two editable fields, the focused one with a `▏` at the cursor.
+fn draw_edit(frame: &mut Frame, area: Rect, state: &EditState) {
+    let label = Style::default().add_modifier(Modifier::BOLD);
+    let field = |name: &str, text: &str, focused: bool| {
+        let mut shown = text.to_string();
+        if focused {
+            let at = shown
+                .char_indices()
+                .nth(state.cursor)
+                .map_or(shown.len(), |(i, _)| i);
+            shown.insert(at, '▏');
+        }
+        let style = if focused {
+            Style::default().add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        };
+        vec![
+            Line::styled(name.to_string(), label),
+            Line::styled(shown, style),
+            Line::raw(""),
+        ]
+    };
+    let mut lines = vec![Line::raw(format!("Editing {}", state.id)), Line::raw("")];
+    lines.extend(field(
+        "Instruction",
+        &state.instruction,
+        state.field == Field::Instruction,
+    ));
+    lines.extend(field(
+        "Scope (glob)",
+        &state.scope,
+        state.field == Field::Scope,
+    ));
+    let detail = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" Edit "))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(detail, area);
+}
+
 fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
+    if let Mode::Edit(state) = &app.mode {
+        draw_edit(frame, area, state);
+        return;
+    }
     let block = Block::default().borders(Borders::ALL).title(" Detail ");
     let Some(entry) = app.selected() else {
         let empty = Paragraph::new("Nothing selected.").block(block);
@@ -120,7 +165,7 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "confirmed, disabled"
     };
-    let mut lines = vec![
+    let lines = vec![
         Line::from(vec![
             Span::styled("Scope        ", label),
             Span::raw(entry.scope().to_string()),
@@ -146,44 +191,62 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
         Line::styled("Instruction", label),
         Line::raw(entry.instruction().to_string()),
     ];
-    let snippet = |title: &str, text: Option<&str>, colour: Color, lines: &mut Vec<Line>| {
-        let Some(text) = text else {
-            return;
-        };
-        lines.push(Line::raw(""));
-        lines.push(Line::styled(title.to_string(), label.fg(colour)));
-        for line in text.lines() {
-            lines.push(Line::styled(
-                format!("  {line}"),
-                Style::default().fg(colour),
-            ));
-        }
-    };
-    snippet(
-        "Anti-Pattern (Avoid)",
-        entry.anti_pattern(),
-        Color::Red,
-        &mut lines,
+    // The avoid and prefer snippets get boxes of their own: the border and
+    // title carry the red/green distinction, so the text can be coloured by
+    // syntax.
+    let colours = highlight::colours_enabled();
+    let snippets: Vec<(&str, &str, Color)> = [
+        ("Anti-Pattern (Avoid)", entry.anti_pattern(), Color::Red),
+        (
+            "Preferred-Pattern (Use)",
+            entry.preferred_pattern(),
+            Color::Green,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(title, text, colour)| text.map(|text| (title, text, colour)))
+    .collect();
+    let mut constraints = vec![Constraint::Min(3)];
+    constraints.extend(
+        snippets
+            .iter()
+            .map(|(_, text, _)| Constraint::Length(text.lines().count() as u16 + 2)),
     );
-    snippet(
-        "Preferred-Pattern (Use)",
-        entry.preferred_pattern(),
-        Color::Green,
-        &mut lines,
-    );
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
 
     let detail = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(detail, area);
+    frame.render_widget(detail, parts[0]);
+    for ((title, text, colour), part) in snippets.into_iter().zip(parts.iter().skip(1)) {
+        let border = if colours {
+            Style::default().fg(colour)
+        } else {
+            Style::default()
+        };
+        let body = highlight::snippet_lines(text, entry.scope(), colours, colour);
+        let snippet = Paragraph::new(body).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(border)
+                .title(format!(" {title} ")),
+        );
+        frame.render_widget(snippet, *part);
+    }
 }
 
 pub const KEYS: &str =
-    "[↑/↓] Navigate | [Space] Toggle Enable | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
+    "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let keys = match &app.mode {
         Mode::ConfirmDelete(_) => "[y] Delete | any other key cancels".to_string(),
+        Mode::Edit(_) => {
+            "[Tab] Switch field | [←/→] Move | [Enter] Save and sync | [Esc] Cancel".to_string()
+        }
         Mode::Filter => "[Enter] Keep filter | [Esc] Clear filter | [Backspace] Edit".to_string(),
         Mode::Normal => KEYS.to_string(),
     };
@@ -277,5 +340,33 @@ mod tests {
         let confirming = screen(&app, &ASCII);
         assert!(confirming.contains("[y] Delete"), "{confirming}");
         assert!(confirming.contains("[x]"), "ascii glyphs: {confirming}");
+    }
+
+    #[test]
+    fn the_edit_pane_shows_both_fields_and_its_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = RuleStore::open_ephemeral(Paths::for_root(dir.path())).unwrap();
+        store
+            .record_observation(Observation::new(
+                RuleCategory::Types,
+                "**/*.ts",
+                RuleSource::Manual,
+                "Prefer interface for object types.",
+            ))
+            .unwrap();
+        let mut app = App::load(&store).unwrap();
+        app.on_key(Key::Char('e'), &store);
+        let text = screen(&app, &UNICODE);
+        assert!(text.contains(" Edit "), "{text}");
+        assert!(
+            text.contains("Scope (glob)") && text.contains("**/*.ts"),
+            "{text}"
+        );
+        assert!(
+            text.contains("object types.▏"),
+            "the cursor sits at the end: {text}"
+        );
+        assert!(text.contains("[Enter] Save and sync"), "{text}");
+        assert!(screen(&App::load(&store).unwrap(), &UNICODE).contains("[e] Edit"));
     }
 }

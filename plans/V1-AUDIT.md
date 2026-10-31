@@ -28,9 +28,9 @@ before it is reliable.
 | M4 | `types.rs`: **zod schemas** | Not detected | `ast/analyzers/types.rs` **Fixed in phase 9 step 2.** |
 | M5 | `arch.rs`: **DI patterns** | Not detected | `ast/analyzers/arch.rs` **Fixed in phase 9 step 3.** |
 | M6 | **`~/.taste/global.db`**, cross-project rules (§2, §4.3) | `Paths::global_db()` exists; nothing reads or writes the file | `config.rs:90` |
-| M7 | Terminal dashboard can **edit** a rule (§2 `app.rs`: "toggle, edit, delete") | Toggle, promote, delete, sync, filter. No edit. | `tui/app.rs` |
-| M8 | Dashboard shows a **syntax-highlighted** avoid/prefer diff box (§8) | Red/green colouring, no syntax highlighting | `tui/ui.rs` |
-| M9 | Scanner walks with **`ignore::WalkParallel`** and meets **<300 ms** (§1, §8) | Serial `WalkBuilder` walk; only parsing is parallel. 991 files took 321 ms in release. | `ast/scan.rs:65` |
+| M7 | Terminal dashboard can **edit** a rule (§2 `app.rs`: "toggle, edit, delete") | Toggle, promote, delete, sync, filter. No edit. | `tui/app.rs` **Fixed in phase 12 step 1.** |
+| M8 | Dashboard shows a **syntax-highlighted** avoid/prefer diff box (§8) | Red/green colouring, no syntax highlighting | `tui/ui.rs` **Fixed in phase 12 step 2.** |
+| M9 | Scanner walks with **`ignore::WalkParallel`** and meets **<300 ms** (§1, §8) | Serial `WalkBuilder` walk; only parsing is parallel. 991 files took 321 ms in release. | `ast/scan.rs:65` **Fixed in phase 12 step 3.** |
 | M10 | `detected_stack` like `["typescript", "nestjs", "react", "postgresql"]` (§4.1) | Detects rust, python, go and some JS frameworks. Never `typescript` and never a database. Root `package.json` only. | `ast/scan.rs:255` **Fixed in phase 7 step 5.** |
 | M12 | Deduplication by "token-jaccard **& structural similarity**" (§2 `scorer/dedup.rs`) | Token overlap of the instruction plus scope equality only. Two observations with different wording but the same avoid/prefer snippets become two rules. Found while validating the phase plans. | `scorer/dedup.rs` **Fixed in phase 8 step 1.** |
 | M11 | `npx opentaste` runs the tool (§2, §10 phase 6) | The npm name `opentaste` belongs to an unrelated package. The wrapper is `@opentaste/cli`. **Cannot be built as written**; see section 4. | `packages/npm-opentaste` |

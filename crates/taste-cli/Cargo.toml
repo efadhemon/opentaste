@@ -27,6 +27,7 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 chrono.workspace = true
 # History mining analyses past commits' files in parallel.
 rayon.workspace = true
+tree-sitter-highlight.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

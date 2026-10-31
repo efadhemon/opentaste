@@ -11,15 +11,16 @@ use std::sync::OnceLock;
 
 use tree_sitter::{Node, Tree};
 
-use super::{run, Count};
+use super::{Count, Pass};
 use crate::ast::query::{self, ScriptQuery};
 use crate::ast::SupportedLanguage;
 
-static DECORATORS: ScriptQuery = ScriptQuery::new("(decorator) @decorator");
+pub(super) static DECORATORS: ScriptQuery = ScriptQuery::new("(decorator) @decorator");
 
-static IMPORTS: ScriptQuery = ScriptQuery::new("(import_statement source: (string) @source) @stmt");
+static IMPORTS: ScriptQuery =
+    ScriptQuery::top_level("(import_statement source: (string) @source) @stmt");
 
-static ERRORS: ScriptQuery = ScriptQuery::new(
+pub(super) static ERRORS: ScriptQuery = ScriptQuery::new(
     r#"
     (class_declaration name: (type_identifier) @name) @class
     (throw_statement
@@ -27,11 +28,10 @@ static ERRORS: ScriptQuery = ScriptQuery::new(
     "#,
 );
 
-pub(super) fn decorators(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
-    let origins = Origins::of(lang, tree, source);
+pub(super) fn decorators(pass: &Pass<'_>, source: &str, origins: &Origins) -> Count {
     let mut custom = 0u32;
     let mut framework = 0u32;
-    for (_, node) in run(&DECORATORS, lang, tree, source) {
+    for (_, node) in pass.run(&DECORATORS) {
         let Some(name) = decorator_name(node, source).filter(|name| !name.is_empty()) else {
             continue;
         };
@@ -44,11 +44,15 @@ pub(super) fn decorators(lang: SupportedLanguage, tree: &Tree, source: &str) -> 
     Count::from_sides(custom, framework)
 }
 
-pub(super) fn errors(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
-    let origins = Origins::of(lang, tree, source);
+pub(super) fn errors(
+    lang: SupportedLanguage,
+    pass: &Pass<'_>,
+    source: &str,
+    origins: &Origins,
+) -> Count {
     let mut custom = 0u32;
     let mut bare = 0u32;
-    for (index, node) in run(&ERRORS, lang, tree, source) {
+    for (index, node) in pass.run(&ERRORS) {
         match capture(index, lang) {
             "class" => {
                 if extends_error_base(node, source) {
@@ -88,7 +92,7 @@ impl Origins {
             return origins;
         };
         let names = compiled.capture_names();
-        for group in query::matches(compiled, tree, source) {
+        for group in query::matches(compiled, IMPORTS.max_depth(), tree, source) {
             let node = |wanted: &str| {
                 group
                     .iter()

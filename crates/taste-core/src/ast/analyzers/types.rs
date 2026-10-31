@@ -9,26 +9,24 @@
 //! so counting them would push the ratio toward "prefer `type`" in projects
 //! that always use `interface` for objects.
 
-use tree_sitter::Tree;
-
-use super::{run, Count};
+use super::{Count, Pass};
 use crate::ast::query::ScriptQuery;
 use crate::ast::SupportedLanguage;
 
-static TYPES: ScriptQuery = ScriptQuery::new(
+pub(super) static TYPES: ScriptQuery = ScriptQuery::new(
     r#"
     (interface_declaration) @interface
     (type_alias_declaration value: (object_type)) @type_alias
     "#,
 );
 
-pub(super) fn type_constructs(lang: SupportedLanguage, tree: &Tree, source: &str) -> Count {
+pub(super) fn type_constructs(lang: SupportedLanguage, pass: &Pass<'_>) -> Count {
     if !lang.is_typescript() {
         return Count::default();
     }
     let mut interfaces = 0u32;
     let mut aliases = 0u32;
-    for (index, _) in run(&TYPES, lang, tree, source) {
+    for (index, _) in pass.run(&TYPES) {
         match capture(&TYPES, lang, index) {
             "interface" => interfaces += 1,
             "type_alias" => aliases += 1,

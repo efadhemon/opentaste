@@ -104,6 +104,44 @@ impl SupportedLanguage {
         }
     }
 
+    /// The language every file in a scope glob is written in, read from its
+    /// extension: `**/*.py` is Python, `**/*.{ts,tsx}` TypeScript. `**/*`
+    /// and a brace list spanning families name none.
+    pub fn from_scope(scope: &str) -> Option<Self> {
+        let ext = scope.trim().rsplit_once('.')?.1;
+        let exts: Vec<&str> = match ext.strip_prefix('{').and_then(|e| e.strip_suffix('}')) {
+            Some(list) => list.split(',').collect(),
+            None => vec![ext],
+        };
+        let mut langs = exts
+            .iter()
+            .map(|ext| Self::from_path(Path::new(&format!("x.{ext}"))));
+        let first = langs.next()??;
+        langs
+            .all(|lang| lang.is_some_and(|lang| lang.family() == first.family()))
+            .then_some(first)
+    }
+
+    /// The grammar's `highlights.scm`, for the dashboard.
+    ///
+    /// TypeScript's bundled query only adds what TypeScript has beyond
+    /// JavaScript, and JavaScript's grammar is not a dependency, so the
+    /// script family gets the common JavaScript captures from
+    /// [`SCRIPT_HIGHLIGHTS`] first.
+    pub fn highlights_query(self) -> String {
+        match self.family() {
+            Family::Script => {
+                format!(
+                    "{SCRIPT_HIGHLIGHTS}\n{}",
+                    tree_sitter_typescript::HIGHLIGHTS_QUERY
+                )
+            }
+            Family::Python => tree_sitter_python::HIGHLIGHTS_QUERY.to_string(),
+            Family::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY.to_string(),
+            Family::Go => tree_sitter_go::HIGHLIGHTS_QUERY.to_string(),
+        }
+    }
+
     /// The family whose conventions and counts this language shares.
     pub fn family(self) -> Family {
         match self {
@@ -158,6 +196,25 @@ impl SupportedLanguage {
         }
     }
 }
+
+/// The JavaScript captures TypeScript's own `highlights.scm` leaves to
+/// `tree-sitter-javascript`: strings, comments, numbers and keywords.
+const SCRIPT_HIGHLIGHTS: &str = r#"
+(comment) @comment
+[(string) (template_string)] @string
+(number) @number
+[(true) (false) (null) (undefined)] @constant.builtin
+(function_declaration name: (identifier) @function)
+(call_expression function: (identifier) @function)
+(call_expression function: (member_expression property: (property_identifier) @function))
+(decorator) @attribute
+[
+  "async" "await" "break" "case" "catch" "class" "const" "continue" "default"
+  "else" "export" "extends" "finally" "for" "from" "function" "if" "import"
+  "in" "instanceof" "let" "new" "of" "return" "static" "switch" "throw" "try"
+  "typeof" "var" "while" "yield"
+] @keyword
+"#;
 
 thread_local! {
     static PARSERS: RefCell<Vec<(SupportedLanguage, Parser)>> = const { RefCell::new(Vec::new()) };
@@ -285,6 +342,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_languages_highlight_query_compiles_against_its_grammar() {
+        for lang in [
+            SupportedLanguage::TypeScript,
+            SupportedLanguage::Tsx,
+            SupportedLanguage::JavaScript,
+            SupportedLanguage::Python,
+            SupportedLanguage::Rust,
+            SupportedLanguage::Go,
+        ] {
+            let query = tree_sitter::Query::new(&lang.language(), &lang.highlights_query());
+            assert!(query.is_ok(), "{}: {:?}", lang.name(), query.err());
+        }
+    }
+
+    #[test]
+    fn a_scope_names_a_language_only_when_every_extension_shares_a_family() {
+        let lang = |scope| SupportedLanguage::from_scope(scope);
+        assert_eq!(lang("**/*.py"), Some(SupportedLanguage::Python));
+        assert_eq!(
+            lang("src/**/*.{ts,tsx}"),
+            Some(SupportedLanguage::TypeScript)
+        );
+        assert_eq!(
+            lang("**/*.{ts,tsx,js,jsx,mjs,cjs}"),
+            Some(SupportedLanguage::TypeScript)
+        );
+        assert_eq!(lang("**/*"), None);
+        assert_eq!(lang("**/*.{ts,py}"), None);
+        assert_eq!(lang("**/*.md"), None);
     }
 
     #[test]
