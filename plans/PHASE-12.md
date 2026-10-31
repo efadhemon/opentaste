@@ -1,6 +1,6 @@
 # Phase 12: Dashboard editing, highlighting and scan speed
 
-**Status:** pending
+**Status:** ongoing
 
 | | |
 | --- | --- |
@@ -16,21 +16,27 @@
 SPEC.md §2 describes `tui/app.rs` as "Rule list, filter, toggle, **edit**,
 delete". Everything but edit exists.
 
-- [ ] `e` on a rule opens an edit mode for its **instruction** and **scope**,
+- [x] `e` on a rule opens an edit mode for its **instruction** and **scope**,
       one field at a time, with the usual line-editing keys; `Enter` saves,
-      `Esc` cancels.
-- [ ] A scope is checked with `storage::validate_scope` before saving; an
+      `Esc` cancels. (`Tab` switches field; ←/→, Home/End, Backspace and
+      Delete edit around a cursor. A refused save keeps the edit open.)
+- [x] A scope is checked with `storage::validate_scope` before saving; an
       invalid glob is shown as an error and nothing is written.
-- [ ] Saving goes through a new `RuleStore::update_rule(id, instruction,
+- [x] Saving goes through a new `RuleStore::update_rule(id, instruction,
       scope)`, under the lock, then syncs. Editing a candidate updates the
-      cache; editing a confirmed rule updates `rules.json`.
-- [ ] If the new wording makes the rule a duplicate of another, say so and
-      do not save; merging two rules is not an edit.
-- [ ] The status bar lists `[e] Edit`.
-- [ ] Tests, against the terminal-free `App` state machine: edit and save
+      cache; editing a confirmed rule updates `rules.json`. (The identifier
+      stays the same: an edit corrects a rule rather than making a new one,
+      so `taste disable`, contradictions and later sightings still find it.)
+- [x] If the new wording makes the rule a duplicate of another, say so and
+      do not save; merging two rules is not an edit. (Duplicate by
+      deduplication's rules, or the same words over the same scope in any
+      category, which would print the same line twice. An empty instruction
+      is refused too.)
+- [x] The status bar lists `[e] Edit`.
+- [x] Tests, against the terminal-free `App` state machine: edit and save
       each field; cancel leaves the rule untouched; an invalid scope is
       refused; a duplicate is refused; the edited rule reaches the editor
-      files.
+      files. (Plus `update_rule`'s own tests in `promotion_flow.rs`.)
 
 ## Step 2: Syntax highlighting (M8)
 

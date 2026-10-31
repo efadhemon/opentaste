@@ -25,4 +25,4 @@ pub use ast::{content_hash, scan, ScanReport, SupportedLanguage, Tally};
 pub use diff::{analyze, analyze_in, contradictions, scrub};
 pub use error::{Error, Result};
 pub use models::{CandidateRule, ProjectContext, RuleCategory, RuleSource, RulesFile, TasteRule};
-pub use storage::{Observation, Outcome, RuleStore};
+pub use storage::{Edit, Observation, Outcome, RuleStore};

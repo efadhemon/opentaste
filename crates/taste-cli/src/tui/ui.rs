@@ -14,7 +14,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wra
 use ratatui::Frame;
 
 use crate::output::Glyphs;
-use crate::tui::app::{App, Entry, Mode};
+use crate::tui::app::{App, EditState, Entry, Field, Mode};
 
 const BAR_WIDTH: usize = 5;
 
@@ -105,7 +105,51 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App, glyphs: &Glyphs) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// The two editable fields, the focused one with a `▏` at the cursor.
+fn draw_edit(frame: &mut Frame, area: Rect, state: &EditState) {
+    let label = Style::default().add_modifier(Modifier::BOLD);
+    let field = |name: &str, text: &str, focused: bool| {
+        let mut shown = text.to_string();
+        if focused {
+            let at = shown
+                .char_indices()
+                .nth(state.cursor)
+                .map_or(shown.len(), |(i, _)| i);
+            shown.insert(at, '▏');
+        }
+        let style = if focused {
+            Style::default().add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        };
+        vec![
+            Line::styled(name.to_string(), label),
+            Line::styled(shown, style),
+            Line::raw(""),
+        ]
+    };
+    let mut lines = vec![Line::raw(format!("Editing {}", state.id)), Line::raw("")];
+    lines.extend(field(
+        "Instruction",
+        &state.instruction,
+        state.field == Field::Instruction,
+    ));
+    lines.extend(field(
+        "Scope (glob)",
+        &state.scope,
+        state.field == Field::Scope,
+    ));
+    let detail = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title(" Edit "))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(detail, area);
+}
+
 fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
+    if let Mode::Edit(state) = &app.mode {
+        draw_edit(frame, area, state);
+        return;
+    }
     let block = Block::default().borders(Borders::ALL).title(" Detail ");
     let Some(entry) = app.selected() else {
         let empty = Paragraph::new("Nothing selected.").block(block);
@@ -179,11 +223,14 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 pub const KEYS: &str =
-    "[↑/↓] Navigate | [Space] Toggle Enable | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
+    "[↑/↓] Navigate | [Space] Toggle Enable | [e] Edit | [p] Promote Candidate | [d] Delete | [s] Sync to Editors | [/] Filter | [q] Quit";
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let keys = match &app.mode {
         Mode::ConfirmDelete(_) => "[y] Delete | any other key cancels".to_string(),
+        Mode::Edit(_) => {
+            "[Tab] Switch field | [←/→] Move | [Enter] Save and sync | [Esc] Cancel".to_string()
+        }
         Mode::Filter => "[Enter] Keep filter | [Esc] Clear filter | [Backspace] Edit".to_string(),
         Mode::Normal => KEYS.to_string(),
     };

@@ -54,6 +54,10 @@ fn translate(code: KeyCode) -> Option<Key> {
         KeyCode::Enter => Key::Enter,
         KeyCode::Esc => Key::Esc,
         KeyCode::Backspace => Key::Backspace,
+        KeyCode::Delete => Key::Delete,
+        KeyCode::Left => Key::Left,
+        KeyCode::Right => Key::Right,
+        KeyCode::Tab | KeyCode::BackTab => Key::Tab,
         KeyCode::Char(c) => Key::Char(c),
         _ => return None,
     })

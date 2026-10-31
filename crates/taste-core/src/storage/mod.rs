@@ -89,6 +89,19 @@ impl Observation {
     }
 }
 
+/// What [`RuleStore::update_rule`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Edit {
+    Updated,
+    /// No rule or candidate carries that identifier.
+    NotFound,
+    /// The edited rule would say the same as this other rule. Merging two
+    /// rules is not an edit, so nothing was written.
+    Duplicate(String),
+    /// An instruction must say something.
+    EmptyInstruction,
+}
+
 /// What recording an observation did to the rule set.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
@@ -346,6 +359,101 @@ impl RuleStore {
         }
 
         Ok(false)
+    }
+
+    /// Reword a rule or candidate, or change its scope, as the dashboard's
+    /// `[e]` does. The identifier stays: an edit corrects what a rule says,
+    /// it does not make a new one, so references to it (`taste disable`,
+    /// contradictions, later sightings) keep working.
+    ///
+    /// The scope is validated first and an invalid glob is an error with
+    /// nothing written. A confirmed rule is edited in `rules.json`, a
+    /// candidate in the cache; the caller syncs.
+    pub fn update_rule(&self, id: &str, instruction: &str, scope: &str) -> Result<Edit> {
+        let instruction = instruction.trim();
+        let scope = scope.trim();
+        validate_scope(scope)?;
+        if instruction.is_empty() {
+            return Ok(Edit::EmptyInstruction);
+        }
+        let _guard = self.lock()?;
+        let mut rules = self.json.load()?;
+        let candidates = self.candidates.list_candidates()?;
+        let (category, anti, preferred) =
+            match (rules.find(id), candidates.iter().find(|c| c.id == id)) {
+                (Some(rule), _) => (
+                    rule.category,
+                    rule.anti_pattern.clone(),
+                    rule.preferred_pattern.clone(),
+                ),
+                (None, Some(candidate)) => (
+                    candidate.category,
+                    candidate.anti_pattern.clone(),
+                    candidate.preferred_pattern.clone(),
+                ),
+                (None, None) => return Ok(Edit::NotFound),
+            };
+        let edited = dedup::Pattern {
+            category,
+            scope,
+            instruction,
+            anti_pattern: anti.as_deref(),
+            preferred_pattern: preferred.as_deref(),
+        };
+        let edited_id = rule_id(category, scope, instruction);
+        let others = rules
+            .rules
+            .iter()
+            .map(|rule| {
+                (
+                    rule.id.as_str(),
+                    dedup::Pattern {
+                        category: rule.category,
+                        scope: &rule.scope,
+                        instruction: &rule.instruction,
+                        anti_pattern: rule.anti_pattern.as_deref(),
+                        preferred_pattern: rule.preferred_pattern.as_deref(),
+                    },
+                )
+            })
+            .chain(candidates.iter().map(|candidate| {
+                (
+                    candidate.id.as_str(),
+                    dedup::Pattern {
+                        category: candidate.category,
+                        scope: &candidate.scope,
+                        instruction: &candidate.instruction,
+                        anti_pattern: candidate.anti_pattern.as_deref(),
+                        preferred_pattern: candidate.preferred_pattern.as_deref(),
+                    },
+                )
+            }));
+        let wording = normalize_instruction(instruction);
+        for (other_id, other) in others {
+            // The same words over the same files is a duplicate whatever the
+            // category: it would be the same line twice in every editor file.
+            let same_line =
+                other.scope.trim() == scope && normalize_instruction(other.instruction) == wording;
+            if other_id != id
+                && (other_id == edited_id || same_line || dedup::is_same_pattern(edited, other))
+            {
+                return Ok(Edit::Duplicate(other_id.to_string()));
+            }
+        }
+        if let Some(rule) = rules.find_mut(id) {
+            rule.instruction = instruction.to_string();
+            rule.scope = scope.to_string();
+            rule.updated_at = Utc::now();
+            self.json.save(&rules)?;
+            return Ok(Edit::Updated);
+        }
+        if let Some(mut candidate) = candidates.into_iter().find(|c| c.id == id) {
+            candidate.instruction = instruction.to_string();
+            candidate.scope = scope.to_string();
+            candidate.updated_at = Utc::now();
+            self.candidates.upsert_candidate(&candidate)?;
+        }
+        Ok(Edit::Updated)
     }
 
     /// Enable or disable a confirmed rule without deleting it.

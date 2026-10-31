@@ -2,10 +2,11 @@
 //!
 //! Every action is a method on [`App`] driven by [`Key`], this module's own
 //! key type, so navigation, filtering, toggling, promotion and deletion are
-//! tested without a PTY. Rendering lives in `ui.rs`; translating terminal
+//! tested without a PTY. That includes editing a rule's instruction and
+//! scope, a small line editor of its own ([`EditState`]). Rendering lives in `ui.rs`; translating terminal
 //! events into [`Key`]s lives in `mod.rs`.
 
-use taste_core::{CandidateRule, RuleCategory, RuleStore, TasteRule};
+use taste_core::{CandidateRule, Edit, RuleCategory, RuleStore, TasteRule};
 
 /// The keys the dashboard understands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,7 +18,85 @@ pub enum Key {
     Enter,
     Esc,
     Backspace,
+    Delete,
+    Left,
+    Right,
+    Tab,
     Char(char),
+}
+
+/// Which of a rule's two editable fields has the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Instruction,
+    Scope,
+}
+
+/// A rule being edited: both fields' text, which one is focused, and the
+/// cursor within it, counted in characters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditState {
+    pub id: String,
+    pub instruction: String,
+    pub scope: String,
+    pub field: Field,
+    pub cursor: usize,
+}
+
+impl EditState {
+    fn text(&mut self) -> &mut String {
+        match self.field {
+            Field::Instruction => &mut self.instruction,
+            Field::Scope => &mut self.scope,
+        }
+    }
+
+    fn len(&mut self) -> usize {
+        self.text().chars().count()
+    }
+
+    fn byte_at(text: &str, chars: usize) -> usize {
+        text.char_indices()
+            .nth(chars)
+            .map_or(text.len(), |(i, _)| i)
+    }
+
+    /// Apply a line-editing key. Returns `false` for keys it does not handle.
+    fn edit(&mut self, key: Key) -> bool {
+        match key {
+            Key::Char(c) => {
+                let cursor = self.cursor;
+                let at = Self::byte_at(self.text(), cursor);
+                self.text().insert(at, c);
+                self.cursor += 1;
+            }
+            Key::Backspace if self.cursor > 0 => {
+                self.cursor -= 1;
+                let cursor = self.cursor;
+                let at = Self::byte_at(self.text(), cursor);
+                self.text().remove(at);
+            }
+            Key::Delete if self.cursor < self.len() => {
+                let cursor = self.cursor;
+                let at = Self::byte_at(self.text(), cursor);
+                self.text().remove(at);
+            }
+            Key::Left => self.cursor = self.cursor.saturating_sub(1),
+            Key::Right => self.cursor = (self.cursor + 1).min(self.len()),
+            Key::Home => self.cursor = 0,
+            Key::End => self.cursor = self.len(),
+            Key::Tab | Key::Up | Key::Down => {
+                self.field = match self.field {
+                    Field::Instruction => Field::Scope,
+                    Field::Scope => Field::Instruction,
+                };
+                self.cursor = self.len();
+            }
+            Key::Backspace | Key::Delete => {}
+            _ => return false,
+        }
+        true
+    }
 }
 
 /// A confirmed rule or a candidate, as one row of the list.
@@ -120,6 +199,8 @@ pub enum Mode {
     Filter,
     /// `[d]` was pressed on this id; only `y` deletes.
     ConfirmDelete(String),
+    /// `[e]` was pressed: editing a rule's instruction and scope.
+    Edit(EditState),
 }
 
 #[derive(Debug)]
@@ -220,6 +301,20 @@ impl App {
 
     fn handle(&mut self, key: Key, store: &RuleStore) -> anyhow::Result<()> {
         match self.mode.clone() {
+            Mode::Edit(mut state) => {
+                match key {
+                    Key::Esc => {
+                        self.mode = Mode::Normal;
+                        self.status = "Edit cancelled; nothing was changed.".to_string();
+                    }
+                    Key::Enter => self.save(state, store)?,
+                    other => {
+                        state.edit(other);
+                        self.mode = Mode::Edit(state);
+                    }
+                }
+                Ok(())
+            }
             Mode::ConfirmDelete(id) => {
                 self.mode = Mode::Normal;
                 if key == Key::Char('y') {
@@ -249,6 +344,7 @@ impl App {
                         self.mode = Mode::Normal;
                         return self.handle(key, store);
                     }
+                    Key::Delete | Key::Left | Key::Right | Key::Tab => {}
                 }
                 let keep = self.selected().map(|entry| entry.id().to_string());
                 self.refilter(keep.as_deref());
@@ -274,6 +370,21 @@ impl App {
             }
             Key::Char(' ') => self.toggle(store)?,
             Key::Char('p') => self.promote(store)?,
+            Key::Char('e') => {
+                if let Some(entry) = self.selected() {
+                    let instruction = entry.instruction().to_string();
+                    self.mode = Mode::Edit(EditState {
+                        id: entry.id().to_string(),
+                        cursor: instruction.chars().count(),
+                        instruction,
+                        scope: entry.scope().to_string(),
+                        field: Field::Instruction,
+                    });
+                    self.status =
+                        "Editing. [Tab] switches field, [Enter] saves and syncs, [Esc] cancels."
+                            .to_string();
+                }
+            }
             Key::Char('d') => {
                 if let Some(entry) = self.selected() {
                     let id = entry.id().to_string();
@@ -301,6 +412,43 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Save an edit through [`RuleStore::update_rule`] and sync the editors.
+    /// A refused edit stays open so it can be fixed.
+    fn save(&mut self, state: EditState, store: &RuleStore) -> anyhow::Result<()> {
+        let refused = match store.update_rule(&state.id, &state.instruction, &state.scope) {
+            Err(taste_core::Error::Glob { pattern, .. }) => Some(format!(
+                "{pattern:?} is not a valid scope glob; nothing was saved."
+            )),
+            Err(err) => return Err(err.into()),
+            Ok(Edit::Updated) => None,
+            Ok(Edit::NotFound) => {
+                self.mode = Mode::Normal;
+                self.status = format!("{} no longer exists.", state.id);
+                return self.reload(store);
+            }
+            Ok(Edit::Duplicate(other)) => Some(format!(
+                "That would say the same as {other}; nothing was saved. Delete one instead."
+            )),
+            Ok(Edit::EmptyInstruction) => {
+                Some("An instruction cannot be empty; nothing was saved.".to_string())
+            }
+        };
+        if let Some(message) = refused {
+            self.status = message;
+            self.mode = Mode::Edit(state);
+            return Ok(());
+        }
+        self.mode = Mode::Normal;
+        let report = store.sync()?;
+        self.status = format!(
+            "Saved {}; {} editor file{} updated.",
+            state.id,
+            report.written.len(),
+            if report.written.len() == 1 { "" } else { "s" }
+        );
+        self.reload(store)
     }
 
     fn toggle(&mut self, store: &RuleStore) -> anyhow::Result<()> {
@@ -600,5 +748,129 @@ mod tests {
             app.on_key(key, &fx.store);
             assert!(app.quit, "{key:?}");
         }
+    }
+
+    /// Select the row whose instruction starts with `prefix`.
+    fn select(app: &mut App, store: &RuleStore, prefix: &str) {
+        press(app, store, &[Key::Home]);
+        while !app.selected().unwrap().instruction().starts_with(prefix) {
+            let before = app.selected_index();
+            press(app, store, &[Key::Down]);
+            assert_ne!(
+                app.selected_index(),
+                before,
+                "no row starts with {prefix:?}"
+            );
+        }
+    }
+
+    fn typed(text: &str) -> Vec<Key> {
+        text.chars().map(Key::Char).collect()
+    }
+
+    fn rule(store: &RuleStore, id: &str) -> TasteRule {
+        store.rules().unwrap().find(id).unwrap().clone()
+    }
+
+    #[test]
+    fn both_fields_are_edited_and_saved_and_reach_the_editor_files() {
+        let fx = fixture();
+        let mut app = App::load(&fx.store).unwrap();
+        select(&mut app, &fx.store, "Prefer path aliases");
+        let id = selected_id(&app);
+
+        press(&mut app, &fx.store, &[Key::Char('e')]);
+        assert!(matches!(app.mode, Mode::Edit(_)));
+        // Append to the instruction, then replace the scope.
+        press(&mut app, &fx.store, &typed(" Always."));
+        press(&mut app, &fx.store, &[Key::Tab]);
+        press(&mut app, &fx.store, &[Key::Backspace; 7]);
+        press(&mut app, &fx.store, &typed("src/**/*.ts"));
+        press(&mut app, &fx.store, &[Key::Enter]);
+
+        assert_eq!(app.mode, Mode::Normal, "{}", app.status);
+        let saved = rule(&fx.store, &id);
+        assert_eq!(
+            saved.instruction,
+            "Prefer path aliases over deep relative imports. Always."
+        );
+        assert_eq!(saved.scope, "src/**/*.ts");
+        let claude =
+            std::fs::read_to_string(fx.store.paths().project_root.join("CLAUDE.md")).unwrap();
+        assert!(
+            claude.contains("deep relative imports. Always."),
+            "{claude}"
+        );
+        assert_eq!(
+            selected_id(&app),
+            id,
+            "the selection stays on the edited rule"
+        );
+    }
+
+    #[test]
+    fn line_editing_keys_move_the_cursor_and_delete_around_it() {
+        let fx = fixture();
+        let mut app = App::load(&fx.store).unwrap();
+        select(&mut app, &fx.store, "Co-locate");
+        press(
+            &mut app,
+            &fx.store,
+            &[Key::Char('e'), Key::Home, Key::Delete, Key::Char('c')],
+        );
+        press(&mut app, &fx.store, &[Key::End, Key::Left, Key::Backspace]);
+        let Mode::Edit(state) = &app.mode else {
+            panic!("{:?}", app.mode);
+        };
+        assert_eq!(
+            state.instruction,
+            "co-locate spec files beside the implementatio."
+        );
+    }
+
+    #[test]
+    fn escape_cancels_and_leaves_the_rule_untouched() {
+        let fx = fixture();
+        let mut app = App::load(&fx.store).unwrap();
+        select(&mut app, &fx.store, "Prefer path aliases");
+        let id = selected_id(&app);
+        let before = rule(&fx.store, &id);
+        press(&mut app, &fx.store, &[Key::Char('e')]);
+        press(&mut app, &fx.store, &typed(" changed"));
+        press(&mut app, &fx.store, &[Key::Esc]);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(rule(&fx.store, &id), before);
+        assert!(!app.quit, "Esc in an edit cancels it rather than quitting");
+    }
+
+    #[test]
+    fn an_invalid_scope_or_a_duplicate_is_refused_and_the_edit_stays_open() {
+        let fx = fixture();
+        let mut app = App::load(&fx.store).unwrap();
+        select(&mut app, &fx.store, "Co-locate");
+        let id = selected_id(&app);
+        let before = rule(&fx.store, &id);
+
+        press(&mut app, &fx.store, &[Key::Char('e'), Key::Tab]);
+        press(&mut app, &fx.store, &typed("["));
+        press(&mut app, &fx.store, &[Key::Enter]);
+        assert!(matches!(app.mode, Mode::Edit(_)), "still editing");
+        assert!(app.status.contains("not a valid scope"), "{}", app.status);
+        assert_eq!(rule(&fx.store, &id), before);
+
+        // Turn it into the other confirmed rule, word for word.
+        press(&mut app, &fx.store, &[Key::Esc, Key::Char('e')]);
+        press(&mut app, &fx.store, &[Key::Backspace; 60]);
+        press(
+            &mut app,
+            &fx.store,
+            &typed("Prefer path aliases over deep relative imports."),
+        );
+        press(&mut app, &fx.store, &[Key::Tab]);
+        press(&mut app, &fx.store, &[Key::Backspace; 20]);
+        press(&mut app, &fx.store, &typed("**/*.ts"));
+        press(&mut app, &fx.store, &[Key::Enter]);
+        assert!(app.status.contains("would say the same"), "{}", app.status);
+        assert_eq!(rule(&fx.store, &id), before);
     }
 }
