@@ -112,3 +112,24 @@ fn personal_rules_live_under_taste_home_only() {
     assert!(home.path().join(".taste/global.db").is_file());
     assert!(!project.path().join(".taste/global.db").exists());
 }
+
+#[test]
+fn status_lists_the_personal_rules_served_here() {
+    let home = tempfile::tempdir().unwrap();
+    let first = aliased_project(home.path());
+    let id = alias_rule_id(first.path());
+    ok(home.path(), first.path(), &["global", "add", &id]);
+
+    let other = tempfile::tempdir().unwrap();
+    ok(home.path(), other.path(), &["init", "--quiet"]);
+    let status = ok(home.path(), other.path(), &["status"]);
+    assert!(
+        status.contains("Personal rules served here (1)"),
+        "{status}"
+    );
+    assert!(status.contains(&format!("(personal) {id}")), "{status}");
+
+    ok(home.path(), other.path(), &["global", "off"]);
+    let off = ok(home.path(), other.path(), &["status"]);
+    assert!(off.contains("Personal rules: off in this project"), "{off}");
+}

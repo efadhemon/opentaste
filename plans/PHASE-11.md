@@ -108,28 +108,30 @@ read it and approved or changed it, and this section records the decision.
 
 ## Step 5: Dashboard and status
 
-- [ ] `taste status` lists personal rules served in this project.
-- [ ] The dashboard shows them with a "personal" badge and can add or
-      remove them.
+- [x] `taste status` lists personal rules served in this project. (Or says the project opted out.)
+- [x] The dashboard shows them with a "personal" badge and can add or
+      remove them. (`[g]` toggles. A rule this project has and is personal is
+      one badged row; a personal rule from elsewhere is a `[★]` row of its own
+      that cannot be deleted or promoted here.)
 
 ## Step 6: The full test set
 
-- [ ] Storage, locking and migration.
-- [ ] Every command, MCP field and precedence rule.
-- [ ] Personal rules never in project files; user-level files spliced safely.
+- [x] Storage, locking and migration.
+- [x] Every command, MCP field and precedence rule.
+- [x] Personal rules never in project files; user-level files spliced safely.
 
 ---
 
 ## Definition of done
 
-- [ ] Step 1's design approved and recorded.
-- [ ] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-      warnings` and `cargo test --workspace` clean.
+- [x] Step 1's design approved and recorded.
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+      warnings` and `cargo test --workspace` clean (482 tests).
 - [ ] **Manual gate:** two real projects on one machine; a rule added as
       personal in one is served in the other through MCP and the user-level
       file, and never appears in either project's git diff.
 - [ ] The website gains a page on personal rules (phase 13 checks this).
-- [ ] AGENTS.md's global row removed; SPEC.md §4.3 says what `global.db`
+- [x] AGENTS.md's global row removed; SPEC.md §4.3 says what `global.db`
       holds.
-- [ ] V1-AUDIT M6 marked fixed.
+- [x] V1-AUDIT M6 marked fixed.
 - [ ] Status at the top of this file set to `completed`.

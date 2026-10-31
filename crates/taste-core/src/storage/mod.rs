@@ -213,17 +213,29 @@ impl RuleStore {
         &self,
         file_path: impl AsRef<std::path::Path>,
     ) -> Result<Vec<TasteRule>> {
+        let normalized = normalize_path(self.paths.relativize(file_path.as_ref()));
+        let mut matched = Vec::new();
+        for rule in self.personal_rules_served()? {
+            if scope_matcher(&rule.scope)?.is_match(&normalized) {
+                matched.push(rule);
+            }
+        }
+        Ok(matched)
+    }
+
+    /// Personal rules this project serves, whatever file is asked about:
+    /// enabled, not opted out of, and not overruled by a project rule.
+    pub fn personal_rules_served(&self) -> Result<Vec<TasteRule>> {
         let Some(global) = &self.global else {
             return Ok(Vec::new());
         };
         if self.global_off()? {
             return Ok(Vec::new());
         }
-        let normalized = normalize_path(self.paths.relativize(file_path.as_ref()));
         let project = self.rules()?;
         let mut served = Vec::new();
         for rule in global.list()? {
-            if !rule.enabled || !scope_matcher(&rule.scope)?.is_match(&normalized) {
+            if !rule.enabled {
                 continue;
             }
             let overruled = project.rules.iter().any(|own| {

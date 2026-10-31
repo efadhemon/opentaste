@@ -253,7 +253,9 @@ pub struct ProjectContext {
 
 ### 4.3 Local SQLite Schema (`.taste/cache.db` & `~/.taste/global.db`)
 
-Used for tracking unpromoted candidate patterns (`confidence < 0.80`) and file AST snapshots without polluting Git:
+`~/.taste/global.db` (under `$TASTE_HOME` when set) holds only the developer's **personal rules** and **sightings**: which projects confirmed which rule. It never holds candidates or snapshots, which are always one project's. A rule becomes personal only when the developer says so (`taste global add`, or `record_coding_taste` with `"global": true`); a rule confirmed in two or more projects is merely suggested (`taste global suggest`). Snippets are kept only on request, since they are one project's code. Personal rules are served through `get_coding_taste`, marked personal and after the project's own, and written to user-level instruction files (`~/.claude/CLAUDE.md`, `~/.codeium/windsurf/memories/global_rules.md`, `~/.codex/AGENTS.md`, for editors that are installed), never to a project's committed files. A project rule, or its opposite, wins; `taste global off` opts a project out. Nothing leaves the machine.
+
+`.taste/cache.db` is used for tracking unpromoted candidate patterns (`confidence < 0.80`) and file AST snapshots without polluting Git:
 
 ```sql
 CREATE TABLE IF NOT EXISTS candidate_rules (
